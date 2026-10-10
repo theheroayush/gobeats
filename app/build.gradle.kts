@@ -15,11 +15,20 @@ android {
         versionName = "1.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("${rootDir}/fitmuscle-release.jks")
+            storePassword = "fitmuscle2026"
+            keyAlias = "fitmuscle"
+            keyPassword = "fitmuscle2026"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
