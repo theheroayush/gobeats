@@ -36,16 +36,21 @@ object AppIconManager {
             "$pkg.MainActivityMountain"
         )
 
-        allAliases.forEach { aliasName ->
-            val newState = if (aliasName == targetAlias) {
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            } else {
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            }
+        // 1. Enable the target alias FIRST so the launcher always sees an active component
+        try {
+            pm.setComponentEnabledSetting(
+                ComponentName(pkg, targetAlias),
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        } catch (_: Exception) {}
+
+        // 2. Disable all other aliases AFTER target alias is active
+        allAliases.filter { it != targetAlias }.forEach { aliasName ->
             try {
                 pm.setComponentEnabledSetting(
                     ComponentName(pkg, aliasName),
-                    newState,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     PackageManager.DONT_KILL_APP
                 )
             } catch (_: Exception) {}

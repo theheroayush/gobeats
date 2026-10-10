@@ -678,10 +678,18 @@ fun SettingsScreen(
                 color = GobeatsSurface,
                 border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(end = 8.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -698,36 +706,43 @@ fun SettingsScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
 
                         Column {
                             Text(
                                 text = "App Icon",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = GobeatsTextPrimary
+                                color = GobeatsTextPrimary,
+                                maxLines = 1
                             )
                             Text(
                                 text = "Pick your style",
                                 fontSize = 12.sp,
-                                color = GobeatsTextMuted
+                                color = GobeatsTextMuted,
+                                maxLines = 1
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    // 4 Style Icons Selector
+                    // 4 Style Icons Selector horizontally on the right (1:1 with mockup_settings_v2.png)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         // 1. Neon Purple Note (Official Mockup style)
                         AppIconOption(
                             isSelected = settings.appIconStyle == "neon_purple",
                             gradient = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899)),
                             iconTint = Color.White,
-                            onClick = { settingsRepository.setAppIconStyle("neon_purple") }
+                            onClick = {
+                                settingsRepository.setAppIconStyle("neon_purple")
+                                com.example.gobeats.core.util.AppIconManager.setAppIcon(
+                                    context,
+                                    com.example.gobeats.core.util.AppIconManager.STYLE_NEON_PURPLE
+                                )
+                                Toast.makeText(context, "App icon updated to Neon Purple", Toast.LENGTH_SHORT).show()
+                            }
                         )
 
                         // 2. White Note
@@ -735,7 +750,14 @@ fun SettingsScreen(
                             isSelected = settings.appIconStyle == "white_minimal",
                             gradient = listOf(Color(0xFFF4EFEA), Color(0xFFE5E5E5)),
                             iconTint = Color(0xFF0C0A09),
-                            onClick = { settingsRepository.setAppIconStyle("white_minimal") }
+                            onClick = {
+                                settingsRepository.setAppIconStyle("white_minimal")
+                                com.example.gobeats.core.util.AppIconManager.setAppIcon(
+                                    context,
+                                    com.example.gobeats.core.util.AppIconManager.STYLE_WHITE_MINIMAL
+                                )
+                                Toast.makeText(context, "App icon updated to White Minimal", Toast.LENGTH_SHORT).show()
+                            }
                         )
 
                         // 3. Sunset Glow
@@ -743,7 +765,14 @@ fun SettingsScreen(
                             isSelected = settings.appIconStyle == "sunset",
                             gradient = listOf(Color(0xFFEA580C), Color(0xFF9333EA)),
                             iconTint = Color.White,
-                            onClick = { settingsRepository.setAppIconStyle("sunset") }
+                            onClick = {
+                                settingsRepository.setAppIconStyle("sunset")
+                                com.example.gobeats.core.util.AppIconManager.setAppIcon(
+                                    context,
+                                    com.example.gobeats.core.util.AppIconManager.STYLE_SUNSET
+                                )
+                                Toast.makeText(context, "App icon updated to Sunset Glow", Toast.LENGTH_SHORT).show()
+                            }
                         )
 
                         // 4. Mountain Peak
@@ -751,7 +780,14 @@ fun SettingsScreen(
                             isSelected = settings.appIconStyle == "mountain",
                             gradient = listOf(Color(0xFF0284C7), Color(0xFF1E1B4B)),
                             iconTint = Color.White,
-                            onClick = { settingsRepository.setAppIconStyle("mountain") }
+                            onClick = {
+                                settingsRepository.setAppIconStyle("mountain")
+                                com.example.gobeats.core.util.AppIconManager.setAppIcon(
+                                    context,
+                                    com.example.gobeats.core.util.AppIconManager.STYLE_MOUNTAIN
+                                )
+                                Toast.makeText(context, "App icon updated to Mountain Peak", Toast.LENGTH_SHORT).show()
+                            }
                         )
                     }
                 }
@@ -987,20 +1023,29 @@ fun SettingsScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.WorkspacePremium, contentDescription = null, tint = Color(0xFFFBBF24))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("gobeats Open-Source Pro", fontWeight = FontWeight.Bold, color = GobeatsTextPrimary)
+                    Text("gobeats Access & Edition", fontWeight = FontWeight.Bold, color = GobeatsTextPrimary)
                 }
             },
             text = {
-                Text(
-                    text = "gobeats is 100% free and open source forever! Every premium feature—including 24-bit Hi-Res decoding, bit-perfect PC sync, and custom graphic equalizer—is already completely unlocked for you.",
-                    fontSize = 13.sp,
-                    color = GobeatsTextSecondary,
-                    lineHeight = 18.sp
-                )
+                Column {
+                    Text(
+                        text = "You are currently enjoying the Community Release with 100% full access unlocked! Every premium capability—including Offline AI Subtitles, Studio 5-Band DSP EQ, Hardware Audio Routing, 60 FPS Visualizer, and Wi-Fi PC Sync—is active.",
+                        fontSize = 13.sp,
+                        color = GobeatsTextSecondary,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Notice: The developer reserves complete autonomy and commercial rights to introduce optional PRO tiers, lifetime licenses, or paid extensions in subsequent releases.",
+                        fontSize = 11.sp,
+                        color = GobeatsTextMuted,
+                        lineHeight = 16.sp
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = { showPremiumDialog = false }) {
-                    Text("Awesome!", color = Color(0xFFEC4899), fontWeight = FontWeight.Bold)
+                    Text("Understood", color = Color(0xFFEC4899), fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -1020,15 +1065,16 @@ fun SettingsScreen(
             },
             text = {
                 Column {
-                    Text("gobeats Android Music Ecosystem", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = GobeatsTextPrimary)
-                    Text("Version 1.0.0 (Release Build)", fontSize = 12.sp, color = GobeatsAmber)
+                    Text("gobeats High-Fidelity Ecosystem", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = GobeatsTextPrimary)
+                    Text("Version 3.2.0 (Build 5)", fontSize = 12.sp, color = GobeatsAmber)
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("• Audio Engine: 32-bit Floating-Point Media3 ExoPlayer", fontSize = 12.sp, color = GobeatsTextSecondary)
-                    Text("• Acoustic FX: Hardware-accelerated LoudnessEnhancer & Graphic EQ", fontSize = 12.sp, color = GobeatsTextSecondary)
-                    Text("• Connect: High-speed local Wi-Fi wireless PC file transfer", fontSize = 12.sp, color = GobeatsTextSecondary)
-                    Text("• License: 100% Free & Open-Source under Apache 2.0", fontSize = 12.sp, color = GobeatsTextSecondary)
+                    Text("• Audio Engine: 32-bit Float Media3 ExoPlayer", fontSize = 12.sp, color = GobeatsTextSecondary)
+                    Text("• Hardware Profiles: Auto Earbud/Car EQ & Persistent AV Delay", fontSize = 12.sp, color = GobeatsTextSecondary)
+                    Text("• AI Video: Offline Dual Subtitles & Smart Skip Intro", fontSize = 12.sp, color = GobeatsTextSecondary)
+                    Text("• Connect: High-speed local Wi-Fi PC file transfer", fontSize = 12.sp, color = GobeatsTextSecondary)
+                    Text("• Edition: Community Release (Developer retains future monetization rights)", fontSize = 12.sp, color = GobeatsTextSecondary)
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("Built with passion for audiophiles who own their music.", fontSize = 12.sp, color = GobeatsTextMuted)
+                    Text("Engineered for true sound lovers who value high craft and offline privacy.", fontSize = 12.sp, color = GobeatsTextMuted)
                 }
             },
             confirmButton = {
@@ -1197,11 +1243,11 @@ private fun AppIconOption(
 ) {
     Box(
         modifier = Modifier
-            .size(52.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
             .background(if (isSelected) Color(0xFF8B5CF6) else Color.Transparent)
             .padding(if (isSelected) 2.dp else 0.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(7.dp))
             .background(Brush.linearGradient(gradient))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
@@ -1210,7 +1256,7 @@ private fun AppIconOption(
             imageVector = Icons.Default.MusicNote,
             contentDescription = null,
             tint = iconTint,
-            modifier = Modifier.size(24.dp)
+            modifier = Modifier.size(16.dp)
         )
     }
 }

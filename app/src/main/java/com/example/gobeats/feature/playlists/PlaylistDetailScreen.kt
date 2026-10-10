@@ -119,8 +119,9 @@ fun PlaylistDetailScreen(
                     )
                 }
 
+                val isSmartPlaylist = playlist.isSmart || playlist.id.startsWith("pl_")
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (playlist.id != "pl_liked" && playlist.id != "pl_favorites") {
+                    if (!isSmartPlaylist) {
                         IconButton(
                             onClick = { showAddSongsDialog = true },
                             modifier = Modifier

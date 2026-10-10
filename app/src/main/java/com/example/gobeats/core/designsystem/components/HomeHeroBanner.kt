@@ -36,14 +36,16 @@ import java.util.Calendar
 
 @Composable
 fun HomeHeroBanner(
+    userName: String = "",
     modifier: Modifier = Modifier
 ) {
     val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-    val greeting = when (currentHour) {
+    val greetingPrefix = when (currentHour) {
         in 4..11 -> "GOOD MORNING"
         in 12..17 -> "GOOD AFTERNOON"
         else -> "GOOD EVENING"
     }
+    val greeting = if (userName.isNotBlank()) "$greetingPrefix, ${userName.uppercase()}" else greetingPrefix
 
     Surface(
         shape = RoundedCornerShape(24.dp),

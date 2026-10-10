@@ -55,8 +55,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.VideoAspectMode
 import com.example.gobeats.core.model.VideoPlaybackStats
+import com.example.gobeats.core.video.DualSubtitleOverlay
+import com.example.gobeats.core.video.OfflineSkipIntroDetector
+import com.example.gobeats.core.video.SkipIntroPill
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsBorderSubtle
 import kotlinx.coroutines.delay
@@ -91,9 +95,11 @@ fun VideoPlayerSurface(
     onCloseStats: () -> Unit = {},
     videoLoudnessBoostPercent: Int = 100,
     resumePrompt: com.example.gobeats.core.model.VideoResumePrompt? = null,
+    playbackState: PlaybackUiState? = null,
     onVideoLoudnessBoostChange: (Int) -> Unit = {},
     onResumeSavedPosition: () -> Unit = {},
-    onDismissResumePrompt: () -> Unit = {}
+    onDismissResumePrompt: () -> Unit = {},
+    onSkipIntro: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(20.dp)
@@ -148,13 +154,16 @@ fun VideoPlayerSurface(
         contentAlignment = Alignment.Center
     ) {
         val playerView = remember {
-            PlayerView(context).apply {
+            val view = android.view.LayoutInflater.from(context).inflate(
+                com.example.gobeats.R.layout.view_media3_texture_player,
+                null
+            ) as PlayerView
+            view.apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 useController = false
-                setBackgroundColor(android.graphics.Color.BLACK)
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 keepScreenOn = true
             }
@@ -163,7 +172,9 @@ fun VideoPlayerSurface(
         DisposableEffect(player) {
             playerView.player = player
             onDispose {
-                playerView.player = null
+                if (playerView.player == player && player?.isPlaying != true) {
+                    playerView.player = null
+                }
             }
         }
 
@@ -382,6 +393,30 @@ fun VideoPlayerSurface(
                         }
                     }
                 }
+            }
+        }
+
+        // Dual Subtitle Overlay
+        if (playbackState != null) {
+            DualSubtitleOverlay(
+                state = playbackState,
+                isControlsVisible = showControlsOverlay && !isTouchLocked,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+
+            // Skip Intro Action Pill
+            playbackState.activeSkipIntroSegment?.let { introSeg ->
+                SkipIntroPill(
+                    visible = playbackState.isSkipIntroVisible && !isTouchLocked,
+                    segment = introSeg,
+                    onSkip = {
+                        onSeek(OfflineSkipIntroDetector.getSkipTargetMs(introSeg))
+                        onSkipIntro()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = if (showControlsOverlay) 64.dp else 16.dp)
+                )
             }
         }
 

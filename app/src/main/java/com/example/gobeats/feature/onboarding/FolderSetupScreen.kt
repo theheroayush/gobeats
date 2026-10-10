@@ -5,8 +5,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,23 +19,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.gobeats.core.designsystem.components.GobeatsPrimaryButton
 import com.example.gobeats.core.designsystem.components.GobeatsSecondaryButton
+import com.example.gobeats.core.designsystem.components.OnboardingProgressBar
 import com.example.gobeats.data.repository.LibraryRepository
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsObsidian
@@ -53,16 +45,17 @@ import com.example.gobeats.theme.GobeatsSurface
 import com.example.gobeats.theme.GobeatsTextMuted
 import com.example.gobeats.theme.GobeatsTextPrimary
 import com.example.gobeats.theme.GobeatsTextSecondary
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Composable
 fun FolderSetupScreen(
     libraryRepository: LibraryRepository,
-    onComplete: () -> Unit
+    onComplete: () -> Unit,
+    onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     val requiredPermissions = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -75,46 +68,29 @@ fun FolderSetupScreen(
         }
     }
 
-    var hasPermission by remember {
-        mutableStateOf(
-            requiredPermissions.any { perm ->
-                ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
-            }
-        )
+    val hasPermission = remember {
+        requiredPermissions.any { perm ->
+            ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        }
     }
 
-    var isScanning by remember { mutableStateOf(false) }
-    var scannedCount by remember { mutableIntStateOf(0) }
-    var currentFile by remember { mutableStateOf("") }
-    var scanFinished by remember { mutableStateOf(false) }
-
-    fun startScanning() {
-        isScanning = true
-        scope.launch {
-            libraryRepository.scanMediaStore().collectLatest { progress ->
-                scannedCount = progress.scannedCount
-                currentFile = progress.currentFile
-                if (progress.isComplete) {
-                    isScanning = false
-                    scanFinished = true
-                }
-            }
+    fun startBackgroundScanAndEnterApp() {
+        // Kick off asynchronous media scan in background without blocking the UI
+        CoroutineScope(Dispatchers.IO).launch {
+            libraryRepository.scanMediaStore().collect {}
         }
+        onComplete()
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val grantedAny = results.values.any { it }
-        hasPermission = grantedAny
         if (grantedAny) {
-            startScanning()
-        }
-    }
-
-    LaunchedEffect(hasPermission) {
-        if (hasPermission && !isScanning && !scanFinished) {
-            startScanning()
+            startBackgroundScanAndEnterApp()
+        } else {
+            // Still admit the user so they can explore the app and connect to PC or server
+            onComplete()
         }
     }
 
@@ -123,99 +99,112 @@ fun FolderSetupScreen(
             .fillMaxSize()
             .background(GobeatsObsidian)
             .statusBarsPadding()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .padding(24.dp)
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
+            // Top Navigation Bar
+            Row(
                 modifier = Modifier
-                    .size(80.dp)
-                    .background(GobeatsSurface, CircleShape),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (isScanning) {
-                    CircularProgressIndicator(
-                        color = GobeatsAmber,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(44.dp)
-                    )
-                } else if (scanFinished) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Ready",
-                        tint = GobeatsAmber,
-                        modifier = Modifier.size(48.dp)
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.FolderOpen,
-                        contentDescription = "Folder",
-                        tint = GobeatsAmber,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = GobeatsTextPrimary,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable { onBack() }
+                )
+
+                // 4-Stage Segmented Progress Bar (Stage 4 Active)
+                OnboardingProgressBar(currentStep = 4)
+
+                Text(
+                    text = "Skip",
+                    fontSize = 14.sp,
+                    color = GobeatsTextMuted,
+                    modifier = Modifier
+                        .clickable { onComplete() }
+                        .padding(4.dp)
+                )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = if (scanFinished) "Your library is ready"
-                       else if (isScanning) "Scanning your music..."
-                       else "Enable music access",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = GobeatsTextPrimary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = if (scanFinished) "Found $scannedCount tracks on this device."
-                       else if (isScanning) "Indexing: $currentFile"
-                       else "gobeats needs permission to index and play the audio files stored on your phone.",
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                color = GobeatsTextSecondary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            if (isScanning) {
-                LinearProgressIndicator(
-                    color = GobeatsAmber,
-                    trackColor = GobeatsSurface,
+            // Center Content
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.8f)
-                        .height(6.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+                        .size(88.dp)
+                        .background(GobeatsSurface, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LibraryMusic,
+                        contentDescription = "Library",
+                        tint = GobeatsAmber,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Text(
-                    text = "$scannedCount tracks found",
-                    fontSize = 13.sp,
+                    text = "Ready to build your library",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = GobeatsTextPrimary,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "gobeats will index your device's music and video files quietly in the background so you can start listening immediately without waiting.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = GobeatsTextSecondary,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            // Bottom Buttons
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (hasPermission) {
+                    GobeatsPrimaryButton(
+                        text = "Enter Library",
+                        onClick = { startBackgroundScanAndEnterApp() }
+                    )
+                } else {
+                    GobeatsPrimaryButton(
+                        text = "Grant Access & Start Listening",
+                        onClick = { permissionLauncher.launch(requiredPermissions) }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    GobeatsSecondaryButton(
+                        text = "Explore App First",
+                        onClick = { onComplete() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text(
+                    text = "Step 4 of 4 • Storage Access",
+                    fontSize = 11.sp,
                     color = GobeatsTextMuted
-                )
-            } else if (scanFinished) {
-                GobeatsPrimaryButton(
-                    text = "Start Listening",
-                    onClick = onComplete
-                )
-            } else {
-                GobeatsPrimaryButton(
-                    text = "Grant Access & Scan",
-                    onClick = { permissionLauncher.launch(requiredPermissions) }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                GobeatsSecondaryButton(
-                    text = "Skip for Now",
-                    onClick = {
-                        onComplete()
-                    }
                 )
             }
         }

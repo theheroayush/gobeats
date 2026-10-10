@@ -40,3 +40,12 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# Network sync & Database repositories
+-keep class com.example.gobeats.core.sync.** { *; }
+-keep class com.example.gobeats.core.database.** { *; }
+-keep class com.example.gobeats.data.repository.** { *; }
+
+# Preserve Line Numbers and Source File for Play Console Crash Deobfuscation
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

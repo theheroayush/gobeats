@@ -95,6 +95,10 @@ fun WelcomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    com.example.gobeats.core.designsystem.components.OnboardingProgressBar(
+                        currentStep = 1,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
                     Text(
                         text = "gobeats",
                         fontSize = 34.sp,

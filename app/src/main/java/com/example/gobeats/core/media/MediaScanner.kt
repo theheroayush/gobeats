@@ -54,8 +54,12 @@ class MediaScanner(
             MediaStore.Audio.Media.IS_ALARM
         )
 
-        // Include both standard music and internet-downloaded audio files (where IS_MUSIC may be 0), excluding only system ringtones/alarms/notifications
-        val selection = "${MediaStore.Audio.Media.IS_RINGTONE} = 0 AND ${MediaStore.Audio.Media.IS_NOTIFICATION} = 0 AND ${MediaStore.Audio.Media.IS_ALARM} = 0"
+        // Include both standard music and internet-downloaded audio files, excluding only system ringtones/alarms/notifications (NULL-safe)
+        val selection = "(${MediaStore.Audio.Media.IS_RINGTONE} = 0 OR ${MediaStore.Audio.Media.IS_RINGTONE} IS NULL) AND " +
+                "(${MediaStore.Audio.Media.IS_NOTIFICATION} = 0 OR ${MediaStore.Audio.Media.IS_NOTIFICATION} IS NULL) AND " +
+                "(${MediaStore.Audio.Media.IS_ALARM} = 0 OR ${MediaStore.Audio.Media.IS_ALARM} IS NULL)"
+
+        val batch = mutableListOf<Track>()
 
         try {
             context.contentResolver.query(
@@ -86,30 +90,49 @@ class MediaScanner(
                     val msAlbumId = if (albumIdCol >= 0) cursor.getLong(albumIdCol) else null
                     val msYear = if (yearCol >= 0) cursor.getInt(yearCol) else null
 
-                    // Noise Filter: Skip tiny UI pings (1ms to 5s), but allow 0L (internet-downloaded files with unindexed duration headers)
+                    // Noise Filter: Skip tiny UI pings (1ms to 5s), but allow 0L
                     if (msDuration != null && msDuration in 1L until 5_000L) {
                         continue
                     }
 
                     val contentUri = ContentUris.withAppendedId(collection, id)
-                    emit(ScanProgress(scannedCount = count, currentFile = name, isComplete = false))
+                    val cleanTitle = msTitle?.ifBlank { null } ?: name.substringBeforeLast('.')
+                    val cleanArtist = msArtist?.ifBlank { null } ?: "Unknown Artist"
+                    val cleanAlbum = msAlbum?.ifBlank { null } ?: "Unknown Album"
+                    val artUri = if (msAlbumId != null && msAlbumId > 0) {
+                        ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), msAlbumId).toString()
+                    } else null
 
-                    val track = MetadataExtractor.extractMetadata(
-                        context = context,
-                        uri = contentUri,
+                    val track = Track(
+                        id = MetadataExtractor.generateStableId(contentUri.toString()),
                         sourceId = "source_local",
+                        fileUri = contentUri.toString(),
+                        title = cleanTitle,
+                        artistName = cleanArtist,
+                        albumTitle = cleanAlbum,
+                        durationMs = msDuration ?: 0L,
+                        trackNumber = 1,
+                        discNumber = 1,
+                        genre = null,
+                        year = msYear,
+                        format = MetadataExtractor.detectFormat(null, contentUri.toString(), name),
+                        bitrate = 0,
+                        sampleRate = 44100,
                         fileSize = size,
-                        displayName = name,
-                        hintTitle = msTitle,
-                        hintArtist = msArtist,
-                        hintAlbum = msAlbum,
-                        hintDurationMs = msDuration,
-                        hintAlbumId = msAlbumId,
-                        hintYear = msYear
+                        artworkUri = artUri,
+                        isAvailable = true,
+                        dateAdded = System.currentTimeMillis(),
+                        isVideo = false
                     )
 
-                    dbHelper.insertOrUpdateTrack(track)
+                    batch.add(track)
                     count++
+
+                    if (batch.size >= 50) {
+                        emit(ScanProgress(scannedCount = count, currentFile = name, isComplete = false))
+                        dbHelper.insertTracksBatch(batch, notify = true)
+                        batch.clear()
+                    }
                 }
             }
 
@@ -130,53 +153,73 @@ class MediaScanner(
                 MediaStore.Video.Media.DURATION
             )
 
-            context.contentResolver.query(
-                videoCollection,
-                videoProjection,
-                null,
-                null,
-                "${MediaStore.Video.Media.DATE_ADDED} DESC"
-            )?.use { vCursor ->
-                val vIdCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val vNameCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val vSizeCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
-                val vTitleCol = vCursor.getColumnIndex(MediaStore.Video.Media.TITLE)
-                val vArtistCol = vCursor.getColumnIndex(MediaStore.Video.Media.ARTIST)
-                val vAlbumCol = vCursor.getColumnIndex(MediaStore.Video.Media.ALBUM)
-                val vDurationCol = vCursor.getColumnIndex(MediaStore.Video.Media.DURATION)
+            try {
+                context.contentResolver.query(
+                    videoCollection,
+                    videoProjection,
+                    null,
+                    null,
+                    "${MediaStore.Video.Media.DATE_ADDED} DESC"
+                )?.use { vCursor ->
+                    val vIdCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val vNameCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    val vSizeCol = vCursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                    val vTitleCol = vCursor.getColumnIndex(MediaStore.Video.Media.TITLE)
+                    val vArtistCol = vCursor.getColumnIndex(MediaStore.Video.Media.ARTIST)
+                    val vAlbumCol = vCursor.getColumnIndex(MediaStore.Video.Media.ALBUM)
+                    val vDurationCol = vCursor.getColumnIndex(MediaStore.Video.Media.DURATION)
 
-                while (vCursor.moveToNext()) {
-                    val vDuration = if (vDurationCol >= 0) vCursor.getLong(vDurationCol) else 0L
-                    // Skip tiny micro clips (1ms to 2s), but allow 0L (unindexed videos)
-                    if (vDuration in 1L until 2_000L) continue
+                    while (vCursor.moveToNext()) {
+                        val vDuration = if (vDurationCol >= 0) vCursor.getLong(vDurationCol) else 0L
+                        if (vDuration in 1L until 2_000L) continue
 
-                    val id = vCursor.getLong(vIdCol)
-                    val name = vCursor.getString(vNameCol) ?: "Video"
-                    val size = vCursor.getLong(vSizeCol)
-                    val msTitle = if (vTitleCol >= 0) vCursor.getString(vTitleCol) else null
-                    val msArtist = if (vArtistCol >= 0) vCursor.getString(vArtistCol) else null
-                    val msAlbum = if (vAlbumCol >= 0) vCursor.getString(vAlbumCol) else null
+                        val id = vCursor.getLong(vIdCol)
+                        val name = vCursor.getString(vNameCol) ?: "Video"
+                        val size = vCursor.getLong(vSizeCol)
+                        val msTitle = if (vTitleCol >= 0) vCursor.getString(vTitleCol) else null
+                        val msArtist = if (vArtistCol >= 0) vCursor.getString(vArtistCol) else null
+                        val msAlbum = if (vAlbumCol >= 0) vCursor.getString(vAlbumCol) else null
 
-                    val contentUri = ContentUris.withAppendedId(videoCollection, id)
-                    emit(ScanProgress(scannedCount = count, currentFile = name, isComplete = false))
+                        val contentUri = ContentUris.withAppendedId(videoCollection, id)
+                        val cleanTitle = msTitle?.ifBlank { null } ?: name.substringBeforeLast('.')
+                        val cleanArtist = msArtist?.ifBlank { null } ?: "Music Video"
+                        val cleanAlbum = msAlbum?.ifBlank { null } ?: "Videos"
 
-                    val track = MetadataExtractor.extractMetadata(
-                        context = context,
-                        uri = contentUri,
-                        sourceId = "source_local",
-                        fileSize = size,
-                        displayName = name,
-                        hintTitle = msTitle,
-                        hintArtist = msArtist ?: "Music Video",
-                        hintAlbum = msAlbum ?: "Videos",
-                        hintDurationMs = vDuration,
-                        hintIsVideo = true
-                    )
+                        val track = Track(
+                            id = MetadataExtractor.generateStableId(contentUri.toString()),
+                            sourceId = "source_local",
+                            fileUri = contentUri.toString(),
+                            title = cleanTitle,
+                            artistName = cleanArtist,
+                            albumTitle = cleanAlbum,
+                            durationMs = vDuration,
+                            trackNumber = 1,
+                            discNumber = 1,
+                            genre = "Video",
+                            year = null,
+                            format = MetadataExtractor.detectFormat("video/mp4", contentUri.toString(), name),
+                            bitrate = 0,
+                            sampleRate = 48000,
+                            fileSize = size,
+                            artworkUri = null,
+                            isAvailable = true,
+                            dateAdded = System.currentTimeMillis(),
+                            isVideo = true,
+                            videoWidth = 1920,
+                            videoHeight = 1080
+                        )
 
-                    dbHelper.insertOrUpdateTrack(track)
-                    count++
+                        batch.add(track)
+                        count++
+
+                        if (batch.size >= 50) {
+                            emit(ScanProgress(scannedCount = count, currentFile = name, isComplete = false))
+                            dbHelper.insertTracksBatch(batch, notify = true)
+                            batch.clear()
+                        }
+                    }
                 }
-            }
+            } catch (_: Exception) {}
 
             // Scan Downloads, Music, and App Sync folders for unindexed internet downloads (.opus, .webm, .m4a, .mp4) & .m3u/.m3u8 playlists
             val extraDirs = listOfNotNull(
@@ -196,21 +239,42 @@ class MediaScanner(
                             } else if (isSupportedMediaFile(file.name, null) && file.length() > 8_192L) {
                                 val fileUri = Uri.fromFile(file)
                                 val isVid = MetadataExtractor.isVideoExtensionOrMime(file.name, null, fileUri.toString())
-                                val track = MetadataExtractor.extractMetadata(
-                                    context = context,
-                                    uri = fileUri,
+                                val cleanName = file.nameWithoutExtension
+                                val track = Track(
+                                    id = MetadataExtractor.generateStableId(fileUri.toString()),
                                     sourceId = "source_local",
+                                    fileUri = fileUri.toString(),
+                                    title = cleanName,
+                                    artistName = if (isVid) "Video Download" else "Audio Download",
+                                    albumTitle = "Downloads",
+                                    durationMs = 0L,
+                                    genre = if (isVid) "Video" else null,
+                                    format = MetadataExtractor.detectFormat(null, fileUri.toString(), file.name),
                                     fileSize = file.length(),
-                                    displayName = file.name,
-                                    hintIsVideo = isVid
+                                    isAvailable = true,
+                                    dateAdded = System.currentTimeMillis(),
+                                    isVideo = isVid
                                 )
-                                dbHelper.insertOrUpdateTrack(track)
+                                batch.add(track)
                                 count++
+                                if (batch.size >= 50) {
+                                    dbHelper.insertTracksBatch(batch, notify = true)
+                                    batch.clear()
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // Flush any remaining batch items
+            if (batch.isNotEmpty()) {
+                dbHelper.insertTracksBatch(batch, notify = true)
+                batch.clear()
+            }
+
+            // Single notification to update UI once scan completes
+            dbHelper.insertTracksBatch(emptyList(), notify = true)
 
             // Auto-sync any .m3u / .m3u8 playlists discovered in Downloads or Music
             if (playlistFiles.isNotEmpty()) {

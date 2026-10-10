@@ -11,8 +11,8 @@ android {
         applicationId = "com.gobeats.player"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "3.2.0"
     }
 
     signingConfigs {
@@ -26,9 +26,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
         }
     }
     compileOptions {
@@ -100,4 +104,5 @@ dependencies {
   implementation(libs.media3.ui)
   implementation(libs.coil.compose)
   implementation("androidx.documentfile:documentfile:1.0.1")
+  implementation("androidx.palette:palette-ktx:1.0.0")
 }

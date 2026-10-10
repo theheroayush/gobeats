@@ -95,6 +95,7 @@ data class PlaylistCardSpec(
     val songCount: Int,
     val gradientColors: List<Color>,
     val isLikedSongs: Boolean = false,
+    val isSmart: Boolean = false,
     val isImported: Boolean = false
 )
 
@@ -110,6 +111,7 @@ fun PlaylistsScreen(
 ) {
     val scope = rememberCoroutineScope()
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    var smartPlaylists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
@@ -122,7 +124,9 @@ fun PlaylistsScreen(
         scope.launch {
             playlistRepository.seedDefaultPlaylistsIfEmpty()
             val loaded = playlistRepository.getAllPlaylists()
+            val smart = playlistRepository.getSmartPlaylists()
             playlists = loaded
+            smartPlaylists = smart
         }
     }
 
@@ -130,17 +134,59 @@ fun PlaylistsScreen(
         loadPlaylists()
     }
 
-    val cardSpecs = remember(playlists) {
-        val likedCount = playlists.firstOrNull { it.id == "pl_favorites" || it.id == "pl_liked" }?.trackCount ?: 0
-        val likedSpec = PlaylistCardSpec(
-            id = "pl_liked",
-            title = "Liked Songs",
-            songCount = likedCount,
-            gradientColors = listOf(Color(0xFF4A1E5C), Color(0xFF1E1430)),
-            isLikedSongs = true,
-            isImported = false
+    val cardSpecs = remember(playlists, smartPlaylists) {
+        val likedCount = smartPlaylists.find { it.id == "pl_liked" }?.trackCount
+            ?: playlists.firstOrNull { it.id == "pl_favorites" || it.id == "pl_liked" }?.trackCount ?: 0
+
+        val smartSpecs = listOf(
+            PlaylistCardSpec(
+                id = "pl_liked",
+                title = "Liked Songs",
+                songCount = likedCount,
+                gradientColors = listOf(Color(0xFF4A1E5C), Color(0xFF1E1430)),
+                isLikedSongs = true,
+                isSmart = true,
+                isImported = false
+            ),
+            PlaylistCardSpec(
+                id = "pl_most_played",
+                title = "Most Played",
+                songCount = smartPlaylists.find { it.id == "pl_most_played" }?.trackCount ?: 0,
+                gradientColors = listOf(Color(0xFFE11D48), Color(0xFF4C0519)),
+                isLikedSongs = false,
+                isSmart = true,
+                isImported = false
+            ),
+            PlaylistCardSpec(
+                id = "pl_heavy_rotation",
+                title = "Heavy Rotation",
+                songCount = smartPlaylists.find { it.id == "pl_heavy_rotation" }?.trackCount ?: 0,
+                gradientColors = listOf(Color(0xFFD97706), Color(0xFF451A03)),
+                isLikedSongs = false,
+                isSmart = true,
+                isImported = false
+            ),
+            PlaylistCardSpec(
+                id = "pl_recently_played",
+                title = "Recently Played",
+                songCount = smartPlaylists.find { it.id == "pl_recently_played" }?.trackCount ?: 0,
+                gradientColors = listOf(Color(0xFF2563EB), Color(0xFF1E1B4B)),
+                isLikedSongs = false,
+                isSmart = true,
+                isImported = false
+            ),
+            PlaylistCardSpec(
+                id = "pl_forgotten_favorites",
+                title = "Forgotten Favorites",
+                songCount = smartPlaylists.find { it.id == "pl_forgotten_favorites" }?.trackCount ?: 0,
+                gradientColors = listOf(Color(0xFF7C3AED), Color(0xFF2E1065)),
+                isLikedSongs = false,
+                isSmart = true,
+                isImported = false
+            )
         )
-        val customSpecs = playlists.filter { it.id != "pl_favorites" && it.id != "pl_liked" }.map { pl ->
+
+        val customSpecs = playlists.filter { !it.id.startsWith("pl_") }.map { pl ->
             val isImp = pl.description?.contains("[Imported]", ignoreCase = true) == true
             PlaylistCardSpec(
                 id = pl.id,
@@ -148,10 +194,12 @@ fun PlaylistsScreen(
                 songCount = pl.trackCount,
                 gradientColors = gradientForPlaylist(pl.id),
                 isLikedSongs = false,
+                isSmart = false,
                 isImported = isImp
             )
         }
-        listOf(likedSpec) + customSpecs
+
+        smartSpecs + customSpecs
     }
 
     LazyColumn(
@@ -239,7 +287,7 @@ fun PlaylistsScreen(
             }
         }
 
-        // Header Section: Playlists Title & + Create / Import Buttons
+        // Header Section: Playlists Title & + Create Playlist Button (1:1 with mockup_playlists_v2.png)
         item {
             Column(
                 modifier = Modifier
@@ -251,83 +299,53 @@ fun PlaylistsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = "Playlists",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GobeatsTextPrimary,
-                        letterSpacing = (-0.5).sp
-                    )
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Text(
+                            text = "Playlists",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GobeatsTextPrimary,
+                            letterSpacing = (-0.5).sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Your moods. Your moments. Your playlists.",
+                            fontSize = 13.sp,
+                            color = GobeatsTextMuted
+                        )
+                    }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // White pill Create Playlist CTA (1:1 with mockup_playlists_v2.png)
+                    Surface(
+                        modifier = Modifier
+                            .clickable { showCreateDialog = true },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFFF4EFEA)
                     ) {
-                        // Import Playlist CTA
-                        Surface(
-                            modifier = Modifier.clickable { showImportSheet = true },
-                            shape = RoundedCornerShape(20.dp),
-                            color = GobeatsSurfaceElevated,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.FileDownload,
-                                    contentDescription = null,
-                                    tint = GobeatsAmber,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Import",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = GobeatsTextPrimary,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        // White pill Create Playlist CTA
-                        Surface(
-                            modifier = Modifier
-                                .clickable { showCreateDialog = true },
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color(0xFFF4EFEA)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = Color(0xFF0C0A09),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Create Playlist",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0C0A09),
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = Color(0xFF0C0A09),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Create Playlist",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF0C0A09),
+                                maxLines = 1,
+                                softWrap = false
+                            )
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Your moods. Your moments. Your playlists.",
-                    fontSize = 13.sp,
-                    color = GobeatsTextMuted
-                )
             }
         }
 
@@ -422,8 +440,8 @@ fun PlaylistsScreen(
         // 3-Column Grid of Cards (filtered according to active filter and search query)
         item {
             val filteredByChip = when (filters[selectedFilterIndex]) {
-                "Yours" -> cardSpecs.filter { !it.isLikedSongs && !it.isImported }
-                "Smart" -> cardSpecs.filter { it.isLikedSongs }
+                "Yours" -> cardSpecs.filter { !it.isSmart && !it.isImported }
+                "Smart" -> cardSpecs.filter { it.isSmart }
                 "Imported" -> cardSpecs.filter { it.isImported }
                 else -> cardSpecs
             }
@@ -501,15 +519,18 @@ fun PlaylistsScreen(
                                             if (spec.isLikedSongs) {
                                                 onFavoritesClick()
                                             } else {
-                                                val matched = playlists.find { it.id == spec.id }
-                                                    ?: Playlist(id = spec.id, name = spec.title, trackCount = spec.songCount)
+                                                val matched = smartPlaylists.find { it.id == spec.id }
+                                                    ?: playlists.find { it.id == spec.id }
+                                                    ?: Playlist(id = spec.id, name = spec.title, trackCount = spec.songCount, isSmart = spec.isSmart)
                                                 onPlaylistClick(matched)
                                             }
                                         },
                                         onDelete = {
-                                            scope.launch {
-                                                playlistRepository.deletePlaylist(spec.id)
-                                                loadPlaylists()
+                                            if (!spec.isSmart) {
+                                                scope.launch {
+                                                    playlistRepository.deletePlaylist(spec.id)
+                                                    loadPlaylists()
+                                                }
                                             }
                                         }
                                     )
@@ -640,11 +661,33 @@ fun PlaylistsScreen(
             },
             text = {
                 Column {
+                    var isCreating by remember { mutableStateOf(false) }
+
                     OutlinedTextField(
                         value = newPlaylistName,
                         onValueChange = { newPlaylistName = it },
                         label = { Text("Playlist Name") },
+                        placeholder = { Text("e.g. Late Night Vibes", color = GobeatsTextMuted) },
                         singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onDone = {
+                                if (newPlaylistName.isNotBlank() && !isCreating) {
+                                    isCreating = true
+                                    scope.launch {
+                                        val created = playlistRepository.createPlaylist(newPlaylistName.trim(), newPlaylistDesc.trim().ifEmpty { null })
+                                        newPlaylistName = ""
+                                        newPlaylistDesc = ""
+                                        selectedFilterIndex = 0
+                                        showCreateDialog = false
+                                        loadPlaylists()
+                                        onPlaylistClick(created)
+                                    }
+                                }
+                            }
+                        ),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = GobeatsAmber,
                             unfocusedBorderColor = GobeatsBorderSubtle,
@@ -669,9 +712,12 @@ fun PlaylistsScreen(
                 }
             },
             confirmButton = {
+                var isCreating by remember { mutableStateOf(false) }
                 TextButton(
+                    enabled = newPlaylistName.isNotBlank() && !isCreating,
                     onClick = {
-                        if (newPlaylistName.isNotBlank()) {
+                        if (newPlaylistName.isNotBlank() && !isCreating) {
+                            isCreating = true
                             scope.launch {
                                 val created = playlistRepository.createPlaylist(newPlaylistName.trim(), newPlaylistDesc.trim().ifEmpty { null })
                                 newPlaylistName = ""
@@ -684,7 +730,11 @@ fun PlaylistsScreen(
                         }
                     }
                 ) {
-                    Text("Create", color = GobeatsAmber, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Create",
+                        color = if (newPlaylistName.isNotBlank()) GobeatsAmber else GobeatsTextMuted,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             },
             dismissButton = {
@@ -727,16 +777,15 @@ private fun PlaylistGridCard(
     var showMenu by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
+        modifier = Modifier.fillMaxWidth()
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(spec.gradientColors)),
+                .background(Brush.linearGradient(spec.gradientColors))
+                .clickable { onClick() },
             contentAlignment = Alignment.Center
         ) {
             if (spec.isLikedSongs) {
@@ -767,7 +816,11 @@ private fun PlaylistGridCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onClick() }
+            ) {
                 Text(
                     text = spec.title,
                     fontSize = 13.sp,
@@ -808,7 +861,7 @@ private fun PlaylistGridCard(
                             onClick()
                         }
                     )
-                    if (!spec.isLikedSongs) {
+                    if (!spec.isLikedSongs && !spec.isSmart) {
                         DropdownMenuItem(
                             text = { Text("Delete Playlist", color = Color(0xFFEF4444)) },
                             onClick = {

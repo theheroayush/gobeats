@@ -155,13 +155,16 @@ fun FloatingVideoMiniplayer(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 val playerView = remember {
-                    PlayerView(context).apply {
+                    val view = android.view.LayoutInflater.from(context).inflate(
+                        com.example.gobeats.R.layout.view_media3_texture_player,
+                        null
+                    ) as PlayerView
+                    view.apply {
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         useController = false
-                        setBackgroundColor(android.graphics.Color.BLACK)
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                         keepScreenOn = true
                     }
@@ -170,7 +173,9 @@ fun FloatingVideoMiniplayer(
                 DisposableEffect(player) {
                     playerView.player = player
                     onDispose {
-                        playerView.player = null
+                        if (playerView.player == player && player?.isPlaying != true) {
+                            playerView.player = null
+                        }
                     }
                 }
 

@@ -2,8 +2,13 @@ package com.example.gobeats.feature.nowplaying
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Brush
+import com.example.gobeats.core.designsystem.components.AudioVisualizerView
+import com.example.gobeats.core.util.rememberArtworkPalette
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -175,21 +180,54 @@ fun NowPlayingBottomSheet(
     val previousTrack = if (state.queueIndex > 0) state.queue.getOrNull(state.queueIndex - 1) else null
     val nextTrack = if (state.queueIndex < state.queue.lastIndex) state.queue.getOrNull(state.queueIndex + 1) else null
 
+    val palette by rememberArtworkPalette(context, track.artworkUri)
+    val animatedDominant by animateColorAsState(
+        targetValue = palette.dominant,
+        animationSpec = tween(durationMillis = 600),
+        label = "dominantMesh"
+    )
+    val animatedDarkMuted by animateColorAsState(
+        targetValue = palette.darkMuted,
+        animationSpec = tween(durationMillis = 600),
+        label = "darkMutedMesh"
+    )
+    val animatedVibrant by animateColorAsState(
+        targetValue = palette.vibrant,
+        animationSpec = tween(durationMillis = 600),
+        label = "vibrantVisualizer"
+    )
+
+    val audioSessionId by (playbackRepository?.audioSessionId ?: MutableStateFlow(0)).collectAsState()
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = GobeatsObsidian,
         dragHandle = null
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .padding(horizontal = 22.dp, vertical = 12.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            animatedDominant.copy(alpha = 0.52f),
+                            animatedDarkMuted.copy(alpha = 0.38f),
+                            GobeatsObsidian,
+                            GobeatsObsidian
+                        )
+                    )
+                )
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
             // Top App Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -448,9 +486,11 @@ fun NowPlayingBottomSheet(
                     onCloseStats = { playbackRepository?.toggleStatsForNerds() },
                     videoLoudnessBoostPercent = state.videoLoudnessBoostPercent,
                     resumePrompt = state.resumePrompt,
+                    playbackState = state,
                     onVideoLoudnessBoostChange = { playbackRepository?.setVideoLoudnessBoost(it) },
                     onResumeSavedPosition = { playbackRepository?.resumeFromSavedPosition() },
-                    onDismissResumePrompt = { playbackRepository?.dismissResumePrompt() }
+                    onDismissResumePrompt = { playbackRepository?.dismissResumePrompt() },
+                    onSkipIntro = { playbackRepository?.skipIntro() }
                 )
             } else {
                 ArtworkCarousel(
@@ -574,7 +614,22 @@ fun NowPlayingBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 60 FPS Real-time Audio Visualizer
+            AudioVisualizerView(
+                isPlaying = state.isPlaying,
+                audioSessionId = audioSessionId,
+                primaryColor = animatedVibrant,
+                secondaryColor = animatedDominant.copy(alpha = 0.95f),
+                barCount = 32,
+                height = 30.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp)
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Tactile Scrubber
             TactileScrubber(
@@ -755,6 +810,7 @@ fun NowPlayingBottomSheet(
                     }
                 }
             }
+        }
         }
     }
 
@@ -991,7 +1047,12 @@ fun NowPlayingBottomSheet(
             onToggleStatsForNerds = { playbackRepository?.toggleStatsForNerds() },
             onOpenSleepTimer = { showSleepTimerDialog = true },
             onSelectLoudnessBoost = { playbackRepository?.setVideoLoudnessBoost(it) },
-            onPickExternalSubtitle = { playbackRepository?.addExternalSubtitle(it) }
+            onPickExternalSubtitle = { playbackRepository?.addExternalSubtitle(it) },
+            onSelectAiSubtitleLanguage = { langCode, isPrimary ->
+                playbackRepository?.loadAiSubtitleTrack(track, langCode, isPrimary)
+            },
+            onSelectDialogueBoost = { playbackRepository?.setDialogueBoostMode(it) },
+            onSelectAvDelay = { playbackRepository?.setAvDelay(it) }
         )
     }
 }

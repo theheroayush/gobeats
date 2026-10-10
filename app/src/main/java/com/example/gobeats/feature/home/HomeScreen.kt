@@ -2,6 +2,7 @@ package com.example.gobeats.feature.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,13 +22,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -45,14 +50,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.gobeats.core.designsystem.components.HomeHeroBanner
 import com.example.gobeats.core.model.Album
 import com.example.gobeats.core.model.Artist
 import com.example.gobeats.core.model.PlaybackUiState
+import com.example.gobeats.core.model.Playlist
 import com.example.gobeats.core.model.Track
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsBorderSubtle
@@ -70,14 +78,21 @@ fun HomeScreen(
     recentlyAdded: List<Track>,
     albums: List<Album>,
     artists: List<Artist>,
+    playlists: List<Playlist> = emptyList(),
+    userName: String = "",
+    isScanning: Boolean = false,
+    scannedCount: Int = 0,
     onTrackClick: (Track, List<Track>) -> Unit,
     onAlbumClick: (Album) -> Unit,
     onArtistClick: (Artist) -> Unit,
+    onPlaylistClick: (Playlist) -> Unit = {},
+    onCreatePlaylistClick: () -> Unit = {},
     onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onSeeAllContinue: () -> Unit,
     onSeeAllRecentlyPlayed: () -> Unit,
     onSeeAllRecentlyAdded: () -> Unit,
+    onSeeAllPlaylists: () -> Unit = {},
     onPlayNext: (Track) -> Unit = {},
     onAddToQueue: (Track) -> Unit = {},
     onEditTags: (Track) -> Unit = {},
@@ -134,10 +149,42 @@ fun HomeScreen(
             }
         }
 
-        // Hero Banner ("Good Morning / Music makes a brighter day")
+        // Ambient Background Scanning Indicator Pill
+        if (isScanning) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF261D13),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            color = GobeatsAmber,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = if (scannedCount > 0) "Indexing library • $scannedCount songs discovered" else "Indexing your music library in background...",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = GobeatsAmber
+                        )
+                    }
+                }
+            }
+        }
+
+        // Hero Banner with Personalized Greeting ("Good Morning, Ayush")
         item {
             Box(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                HomeHeroBanner()
+                HomeHeroBanner(userName = userName)
             }
         }
 
@@ -192,6 +239,76 @@ fun HomeScreen(
             }
         }
 
+        // Section: Your Playlists Carousel with "+ Create Playlist" Card
+        item {
+            Spacer(modifier = Modifier.height(24.dp))
+            SectionHeaderWithSeeAll(
+                title = "Your Playlists",
+                onSeeAllClick = onSeeAllPlaylists
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // "+ Create Playlist" Card
+                item {
+                    Surface(
+                        onClick = onCreatePlaylistClick,
+                        shape = RoundedCornerShape(16.dp),
+                        color = GobeatsSurfaceElevated,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle),
+                        modifier = Modifier
+                            .width(130.dp)
+                            .height(160.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .background(GobeatsAmber.copy(alpha = 0.15f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "New Playlist",
+                                    tint = GobeatsAmber,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "New Playlist",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GobeatsTextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Create",
+                                fontSize = 11.sp,
+                                color = GobeatsTextMuted
+                            )
+                        }
+                    }
+                }
+
+                items(playlists) { pl ->
+                    HomePlaylistCard(
+                        playlist = pl,
+                        onClick = { onPlaylistClick(pl) }
+                    )
+                }
+            }
+        }
+
         // Section: Recently played (Circular Artist Avatars)
         if (artists.isNotEmpty()) {
             item {
@@ -216,7 +333,7 @@ fun HomeScreen(
             }
         }
 
-        // Section: Recently added (Album Covers)
+        // Section: Recently added (Album Covers with Real Coil Artwork)
         if (albums.isNotEmpty()) {
             item {
                 Spacer(modifier = Modifier.height(24.dp))
@@ -303,14 +420,32 @@ private fun ContinueListeningCard(
                 .clip(RoundedCornerShape(16.dp))
                 .background(GobeatsSurfaceElevated)
         ) {
-            // Artwork canvas gradient
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val colors = when ((track.title.hashCode() % 3)) {
-                    0 -> listOf(Color(0xFF2C3E50), Color(0xFF1E2833))
-                    1 -> listOf(Color(0xFF5D2E46), Color(0xFF2E1925))
-                    else -> listOf(Color(0xFF384358), Color(0xFF161E2E))
+            // Real Artwork with Coil AsyncImage, fallback to ambient dark gradient
+            if (track.artworkUri != null) {
+                AsyncImage(
+                    model = track.artworkUri,
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF2C241E), Color(0xFF131316))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (track.isVideo) Icons.Default.PlayCircle else Icons.Default.MusicNote,
+                        contentDescription = null,
+                        tint = GobeatsAmber.copy(alpha = 0.6f),
+                        modifier = Modifier.size(38.dp)
+                    )
                 }
-                drawRect(brush = Brush.verticalGradient(colors))
             }
 
             // Play button circle overlay on card
@@ -359,6 +494,7 @@ private fun ContinueListeningCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+
             Box {
                 IconButton(
                     onClick = { showMenu = true },
@@ -371,6 +507,7 @@ private fun ContinueListeningCard(
                         modifier = Modifier.size(16.dp)
                     )
                 }
+
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false }
@@ -391,17 +528,10 @@ private fun ContinueListeningCard(
                     )
                     DropdownMenuItem(
                         text = { Text("Edit Tags") },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                         onClick = {
                             showMenu = false
                             onEditTags()
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = null,
-                                tint = GobeatsAmber,
-                                modifier = Modifier.size(18.dp)
-                            )
                         }
                     )
                 }
@@ -419,34 +549,75 @@ private fun ContinueListeningCard(
 }
 
 @Composable
+private fun HomePlaylistCard(
+    playlist: Playlist,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(130.dp)
+            .clickable { onClick() }
+    ) {
+        Box(
+            modifier = Modifier
+                .size(130.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF382347), Color(0xFF161022))
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.MusicNote,
+                contentDescription = null,
+                tint = GobeatsAmber.copy(alpha = 0.8f),
+                modifier = Modifier.size(36.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = playlist.name,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = GobeatsTextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        Text(
+            text = "${playlist.trackCount} songs",
+            fontSize = 11.sp,
+            color = GobeatsTextMuted,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 private fun ArtistAvatarItem(
     artist: Artist,
     onClick: () -> Unit
 ) {
     Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(82.dp)
-            .clickable { onClick() }
+            .width(72.dp)
+            .clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(72.dp)
                 .clip(CircleShape)
                 .background(GobeatsSurfaceElevated),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val colors = when ((artist.name.hashCode() % 3)) {
-                    0 -> listOf(Color(0xFF4A3E4E), Color(0xFF221C26))
-                    1 -> listOf(Color(0xFF334A52), Color(0xFF14242B))
-                    else -> listOf(Color(0xFF4A4533), Color(0xFF221E14))
-                }
-                drawCircle(brush = Brush.verticalGradient(colors))
-            }
             Icon(
                 imageVector = Icons.Default.Person,
-                contentDescription = null,
+                contentDescription = artist.name,
                 tint = GobeatsAmber,
                 modifier = Modifier.size(34.dp)
             )
@@ -484,13 +655,31 @@ private fun RecentlyAddedAlbumCard(
                 .clip(RoundedCornerShape(16.dp))
                 .background(GobeatsSurfaceElevated)
         ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val colors = when ((album.title.hashCode() % 3)) {
-                    0 -> listOf(Color(0xFF5A3B33), Color(0xFF2E1916))
-                    1 -> listOf(Color(0xFF2E4554), Color(0xFF15222B))
-                    else -> listOf(Color(0xFF4B3B5E), Color(0xFF21162F))
+            if (album.artworkUri != null) {
+                AsyncImage(
+                    model = album.artworkUri,
+                    contentDescription = album.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF261F2E), Color(0xFF131316))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Album,
+                        contentDescription = null,
+                        tint = GobeatsAmber.copy(alpha = 0.5f),
+                        modifier = Modifier.size(36.dp)
+                    )
                 }
-                drawRect(brush = Brush.verticalGradient(colors))
             }
         }
 

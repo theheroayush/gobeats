@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -85,6 +86,13 @@ fun TrackItemRow(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
+            } else if (track.isVideo) {
+                Icon(
+                    imageVector = Icons.Default.PlayCircle,
+                    contentDescription = "Video",
+                    tint = if (isPlaying) GobeatsAmber else Color(0xFF38BDF8),
+                    modifier = Modifier.size(24.dp)
+                )
             } else {
                 Icon(
                     imageVector = Icons.Default.MusicNote,
@@ -108,7 +116,7 @@ fun TrackItemRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "${track.artistName} • ${track.albumTitle}",
+                text = if (track.isVideo) "VIDEO • ${track.artistName}" else "${track.artistName} • ${track.albumTitle}",
                 fontSize = 12.sp,
                 color = GobeatsTextSecondary,
                 maxLines = 1,

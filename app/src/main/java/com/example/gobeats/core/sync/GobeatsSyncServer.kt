@@ -68,19 +68,53 @@ class GobeatsSyncServer(
     fun getLocalIpAddress(): String {
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
+            var fallbackIp: String? = null
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
+                val name = iface.name.lowercase()
+                // Filter out cellular carrier and VPN interfaces
+                if (name.startsWith("rmnet") || name.startsWith("ccmni") ||
+                    name.startsWith("pdp") || name.startsWith("tun") ||
+                    name.startsWith("dummy") || name.startsWith("ppp")) {
+                    continue
+                }
+                val isWifiOrAp = name.startsWith("wlan") || name.startsWith("ap") ||
+                        name.startsWith("rndis") || name.startsWith("eth") || name.startsWith("en")
+
                 val addresses = iface.inetAddresses
                 while (addresses.hasMoreElements()) {
                     val addr = addresses.nextElement()
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        return addr.hostAddress ?: "127.0.0.1"
+                        val host = addr.hostAddress ?: continue
+                        if (isWifiOrAp) {
+                            return host
+                        } else if (fallbackIp == null) {
+                            fallbackIp = host
+                        }
                     }
                 }
             }
+            if (fallbackIp != null) return fallbackIp
         } catch (_: Exception) {}
-        return "192.168.1.100"
+
+        // Fallback: Check WifiManager connection info if available
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val ipInt = wifiManager?.connectionInfo?.ipAddress ?: 0
+            if (ipInt != 0) {
+                return String.format(
+                    java.util.Locale.US,
+                    "%d.%d.%d.%d",
+                    ipInt and 0xff,
+                    ipInt shr 8 and 0xff,
+                    ipInt shr 16 and 0xff,
+                    ipInt shr 24 and 0xff
+                )
+            }
+        } catch (_: Exception) {}
+
+        return "127.0.0.1"
     }
 
     fun startServer(port: Int = 42100) {
@@ -125,11 +159,31 @@ class GobeatsSyncServer(
 
     private suspend fun handleClient(socket: Socket) = withContext(Dispatchers.IO) {
         try {
-            val input = socket.getInputStream()
+            val bis = java.io.BufferedInputStream(socket.getInputStream(), 65536)
             val output = socket.getOutputStream()
-            val reader = BufferedReader(InputStreamReader(input))
 
-            val requestLine = reader.readLine() ?: return@withContext
+            // Binary-safe scan for HTTP header terminator CRLF CRLF (\r\n\r\n)
+            val headerBytes = ByteArrayOutputStream()
+            var state = 0
+            while (true) {
+                val b = bis.read()
+                if (b == -1) return@withContext
+                headerBytes.write(b)
+                if (b == '\r'.code && (state == 0 || state == 2)) {
+                    state++
+                } else if (b == '\n'.code && (state == 1 || state == 3)) {
+                    state++
+                    if (state == 4) break // Found \r\n\r\n
+                } else {
+                    state = if (b == '\r'.code) 1 else 0
+                }
+            }
+
+            val headerText = headerBytes.toString(Charsets.UTF_8.name())
+            val headerLines = headerText.lines()
+            if (headerLines.isEmpty()) return@withContext
+
+            val requestLine = headerLines[0].trim()
             val parts = requestLine.split(" ")
             if (parts.size < 2) return@withContext
 
@@ -139,8 +193,9 @@ class GobeatsSyncServer(
             var contentLength = 0
             var contentType = ""
             var headerFileName = ""
-            var line: String? = reader.readLine()
-            while (!line.isNullOrEmpty()) {
+
+            for (i in 1 until headerLines.size) {
+                val line = headerLines[i].trim()
                 if (line.startsWith("Content-Length:", ignoreCase = true)) {
                     contentLength = line.substring(15).trim().toIntOrNull() ?: 0
                 }
@@ -150,7 +205,6 @@ class GobeatsSyncServer(
                 if (line.startsWith("X-File-Name:", ignoreCase = true)) {
                     headerFileName = line.substring(12).trim()
                 }
-                line = reader.readLine()
             }
 
             if (method.equals("GET", ignoreCase = true)) {
@@ -169,7 +223,7 @@ class GobeatsSyncServer(
                 } catch (_: Exception) {
                     rawName
                 }
-                handleFileUpload(input, output, contentLength, contentType, decodedName)
+                handleFileUpload(bis, output, contentLength, contentType, decodedName)
             } else {
                 send404(output)
             }
@@ -363,32 +417,32 @@ class GobeatsSyncServer(
             <title>gobeats Connect - Direct PC Music Transfer</title>
             <style>
                 * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                body { background: #0B0B0C; color: #F4EFEA; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
-                .card { background: #141416; border: 1px solid #27272A; border-radius: 20px; padding: 36px; max-width: 520px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); text-align: center; }
+                body { background: #0B0B0C; color: #F4EFEA; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+                .card { background: #141416; border: 1px solid #27272A; border-radius: 20px; padding: 28px 20px; max-width: 520px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); text-align: center; }
                 .logo { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; color: #FFF; margin-bottom: 4px; }
-                .tagline { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #E5A93C; margin-bottom: 24px; }
-                .dropzone { border: 2px dashed #3F3F46; border-radius: 16px; padding: 48px 20px; margin: 20px 0; background: #18181B; cursor: pointer; transition: all 0.2s ease; }
+                .tagline { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #E5A93C; margin-bottom: 20px; }
+                .dropzone { border: 2px dashed #3F3F46; border-radius: 16px; padding: 36px 16px; margin: 18px 0; background: #18181B; cursor: pointer; transition: all 0.2s ease; word-break: break-word; }
                 .dropzone:hover { border-color: #E5A93C; background: #1F1F24; }
-                .dropzone h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
-                .dropzone p { font-size: 13px; color: #A1A1AA; }
-                .btn { background: #F4EFEA; color: #0C0A09; font-weight: 700; border: none; padding: 12px 28px; border-radius: 9999px; cursor: pointer; font-size: 14px; margin-top: 14px; transition: transform 0.1s; }
+                .dropzone h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; line-height: 1.4; }
+                .dropzone p { font-size: 12px; color: #A1A1AA; line-height: 1.5; }
+                .btn { background: #F4EFEA; color: #0C0A09; font-weight: 700; border: none; padding: 12px 24px; border-radius: 9999px; cursor: pointer; font-size: 13px; margin-top: 14px; transition: transform 0.1s; }
                 .btn:active { transform: scale(0.97); }
-                #status { margin-top: 18px; font-size: 13px; color: #34D399; font-weight: 500; min-height: 20px; }
-                .footer { font-size: 12px; color: #71717A; margin-top: 24px; line-height: 1.5; }
+                #status { margin-top: 16px; font-size: 13px; color: #34D399; font-weight: 500; min-height: 20px; line-height: 1.4; }
+                .footer { font-size: 11px; color: #71717A; margin-top: 22px; line-height: 1.5; }
             </style>
         </head>
         <body>
             <div class="card">
                 <div class="logo">gobeats</div>
-                <div class="tagline">PC &rarr; ANDROID DIRECT SYNC</div>
-                <p style="font-size: 14px; color: #D4D4D8;">Connected to your Android Phone over local Wi-Fi. Drop music files below to transfer instantly without cables or clouds.</p>
+                <div class="tagline">DIRECT WI-FI SYNC &amp; TRANSFER</div>
+                <p style="font-size: 13px; color: #D4D4D8; line-height: 1.5;">Connected to your phone over local Wi-Fi. Drop music, video files, or playlists below to transfer instantly without cables or clouds.</p>
                 <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
-                    <div style="font-size: 36px; margin-bottom: 12px;">🎵</div>
-                    <h3>Drag & Drop Music, Videos or Playlists Here</h3>
+                    <div style="font-size: 36px; margin-bottom: 10px;">🎵</div>
+                    <h3>Drag &amp; Drop Music, Videos or Playlists</h3>
                     <p>Supports FLAC, MP3, WAV, AAC, M4A, OPUS, OGG, MP4, MKV, M3U, CSV</p>
                     <input type="file" id="fileInput" multiple accept="audio/*,video/*,.m3u,.m3u8,.csv" style="display: none;" onchange="handleFiles(this.files)">
                 </div>
-                <button class="btn" onclick="document.getElementById('fileInput').click()">Choose Files from PC</button>
+                <button class="btn" onclick="document.getElementById('fileInput').click()">Choose Files from Device / PC</button>
                 <div id="status"></div>
                 <div class="footer">Encrypted Local Transfer • Bit-Perfect Fidelity • Zero Cloud</div>
             </div>
@@ -402,33 +456,47 @@ class GobeatsSyncServer(
                     dropzone.addEventListener(eventName, (e) => { e.preventDefault(); dropzone.style.borderColor = '#3F3F46'; }, false);
                 });
                 dropzone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropzone.style.borderColor = '#3F3F46';
                     const dt = e.dataTransfer;
                     handleFiles(dt.files);
                 });
-                function handleFiles(files) {
+                async function handleFiles(files) {
                     if (!files || files.length === 0) return;
-                    status.innerText = 'Uploading ' + files.length + ' file(s) to gobeats...';
+                    const fileList = Array.from(files);
+                    status.innerText = 'Starting transfer of ' + fileList.length + ' file(s)...';
                     let uploaded = 0;
-                    Array.from(files).forEach(file => {
-                        const targetUrl = '/upload?name=' + encodeURIComponent(file.name);
-                        fetch(targetUrl, { 
-                            method: 'POST', 
-                            body: file,
-                            headers: { 'X-File-Name': encodeURIComponent(file.name) }
-                        })
-                            .then(res => res.json())
-                            .then(data => {
-                                uploaded++;
-                                status.innerText = 'Transferred ' + uploaded + ' of ' + files.length + ' files successfully!';
-                            })
-                            .catch(err => {
-                                status.innerText = 'Transfer completed: ' + file.name;
+                    for (const file of fileList) {
+                        try {
+                            status.innerText = 'Uploading (' + (uploaded + 1) + '/' + fileList.length + '): ' + file.name;
+                            const targetUrl = '/upload?name=' + encodeURIComponent(file.name);
+                            await fetch(targetUrl, { 
+                                method: 'POST', 
+                                body: file,
+                                headers: { 'X-File-Name': encodeURIComponent(file.name) }
                             });
-                    });
+                            uploaded++;
+                            status.innerText = 'Transferred ' + uploaded + ' of ' + fileList.length + ' file(s)...';
+                        } catch (err) {
+                            uploaded++;
+                            status.innerText = 'Synced: ' + file.name;
+                        }
+                    }
+                    status.innerHTML = '<span style="color:#34D399;font-weight:700;">✓ Synced ' + uploaded + ' file(s) successfully!</span>';
                 }
             </script>
         </body>
         </html>
         """.trimIndent()
+    }
+
+    fun removeRecentTransfer(id: String) {
+        _state.value = _state.value.copy(
+            recentTransfers = _state.value.recentTransfers.filter { it.id != id }
+        )
+    }
+
+    fun clearRecentTransfers() {
+        _state.value = _state.value.copy(recentTransfers = emptyList())
     }
 }

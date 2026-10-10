@@ -34,18 +34,27 @@ class GobeatsApplication : Application() {
         private set
     lateinit var folderBrowserRepository: com.example.gobeats.feature.library.folders.FolderBrowserRepository
         private set
+    lateinit var audioDeviceProfileManager: com.example.gobeats.core.audio.AudioDeviceProfileManager
+        private set
+    lateinit var dialogueBoostProcessor: com.example.gobeats.core.audio.DialogueBoostProcessor
+        private set
+    lateinit var monetizationManager: com.example.gobeats.core.billing.MonetizationManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
 
+        monetizationManager = com.example.gobeats.core.billing.MonetizationManager(this)
         dbHelper = GobeatsDatabaseHelper.getInstance(this)
         mediaScanner = MediaScanner(this, dbHelper)
+        equalizerManager = com.example.gobeats.core.audio.EqualizerManager(this)
+        audioDeviceProfileManager = com.example.gobeats.core.audio.AudioDeviceProfileManager(this, dbHelper, equalizerManager)
+        dialogueBoostProcessor = com.example.gobeats.core.audio.DialogueBoostProcessor(this, equalizerManager)
         playbackConnection = PlaybackConnection(this, dbHelper)
         libraryRepository = LibraryRepository(dbHelper, mediaScanner, this, playbackConnection)
         playlistRepository = PlaylistRepository(dbHelper)
         playbackRepository = PlaybackRepository(playbackConnection)
         settingsRepository = com.example.gobeats.data.repository.SettingsRepository(this)
-        equalizerManager = com.example.gobeats.core.audio.EqualizerManager(this)
         syncServer = com.example.gobeats.core.sync.GobeatsSyncServer(this, dbHelper)
         sleepTimerManager = com.example.gobeats.core.audio.SleepTimerManager()
         lyricsRepository = com.example.gobeats.core.lyrics.LyricsRepository(this)

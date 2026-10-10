@@ -142,7 +142,16 @@ data class PlaybackUiState(
     val resumePrompt: VideoResumePrompt? = null,
     val crossfadeDurationSec: Int = 0,
     val gaplessPlayback: Boolean = true,
-    val isCrossfadeActive: Boolean = false
+    val isCrossfadeActive: Boolean = false,
+    val dialogueBoostMode: DialogueBoostMode = DialogueBoostMode.OFF,
+    val avDelayMs: Long = 0L,
+    val primarySubtitleTrack: DualSubtitleTrack? = null,
+    val secondarySubtitleTrack: DualSubtitleTrack? = null,
+    val activePrimarySubtitleText: String? = null,
+    val activeSecondarySubtitleText: String? = null,
+    val activeSkipIntroSegment: SkipIntroSegment? = null,
+    val isSkipIntroVisible: Boolean = false,
+    val currentAudioDeviceProfile: DeviceAudioProfile? = null
 )
 
 data class VideoResumePrompt(
@@ -150,4 +159,47 @@ data class VideoResumePrompt(
     val positionMs: Long,
     val durationMs: Long
 )
+
+enum class DeviceAudioProfileType {
+    EARBUDS,
+    HEADPHONES,
+    CAR_AUDIO,
+    SPEAKER
+}
+
+data class DeviceAudioProfile(
+    val deviceId: String,
+    val name: String,
+    val type: DeviceAudioProfileType,
+    val preferredEqPreset: String = "Studio Reference",
+    val avDelayMs: Long = 0L,
+    val updatedAt: Long = System.currentTimeMillis()
+) : Serializable
+
+enum class DialogueBoostMode {
+    OFF,
+    CLEAR,
+    MAXIMUM
+}
+
+data class SkipIntroSegment(
+    val startMs: Long = 0L,
+    val endMs: Long = 85_000L,
+    val label: String = "Opening"
+) : Serializable
+
+data class SubtitleCue(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String
+) : Serializable
+
+data class DualSubtitleTrack(
+    val id: String,
+    val label: String,
+    val languageCode: String,
+    val isAiGenerated: Boolean = false,
+    val cues: List<SubtitleCue> = emptyList()
+) : Serializable
+
 

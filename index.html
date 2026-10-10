@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - gobeats</title>
+    <style>
+        :root {
+            --bg-color: #0c0a09;
+            --surface-color: #18181b;
+            --text-primary: #f4f4f5;
+            --text-secondary: #a1a1aa;
+            --accent-amber: #f59e0b;
+            --border-color: #27272a;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.65;
+            color: var(--text-primary);
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 48px 24px;
+        }
+        header {
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 24px;
+            margin-bottom: 36px;
+        }
+        h1 {
+            color: var(--accent-amber);
+            font-size: 2.2rem;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        .meta {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+        h2 {
+            color: var(--text-primary);
+            font-size: 1.4rem;
+            margin-top: 36px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+        h3 {
+            color: var(--accent-amber);
+            font-size: 1.15rem;
+            margin-top: 24px;
+        }
+        p, li {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+        strong {
+            color: var(--text-primary);
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+        .highlight-card {
+            background-color: var(--surface-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin: 24px 0;
+        }
+        .highlight-card h3 {
+            margin-top: 0;
+        }
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Privacy Policy for gobeats</h1>
+            <div class="meta">
+                <strong>Package Name:</strong> com.gobeats.player<br>
+                <strong>Effective Date:</strong> October 11, 2026<br>
+                <strong>Last Updated:</strong> October 11, 2026
+            </div>
+        </header>
+
+        <div class="highlight-card">
+            <h3>🛡️ Zero-Tracking & 100% On-Device Guarantee</h3>
+            <p><strong>gobeats</strong> is designed as a standalone, offline-first media player. We do not require accounts, we do not show advertisements, we do not track your behavior, and we never collect or transmit your media library to any server.</p>
+        </div>
+
+        <h2>1. Information We Access & Permissions</h2>
+        
+        <h3>A. Media Storage Access (Local Audio & Video)</h3>
+        <p><strong>Permissions:</strong> <code>READ_MEDIA_AUDIO</code>, <code>READ_MEDIA_VIDEO</code>, and <code>READ_EXTERNAL_STORAGE</code> (for Android 12 and below).</p>
+        <p>Used solely to scan, index, organize, and play your music and video files on your physical device. All song metadata and artwork cache are stored locally in your device's private SQLite database.</p>
+
+        <h3>B. Background Audio & Screen-Off Playback</h3>
+        <p><strong>Permissions:</strong> <code>FOREGROUND_SERVICE</code>, <code>FOREGROUND_SERVICE_MEDIA_PLAYBACK</code>, <code>WAKE_LOCK</code>.</p>
+        <p>Allows high-fidelity audio to play continuously when the app is in the background or when your phone screen is turned off. A standard Android system media notification provides playback controls.</p>
+
+        <h3>C. Local Wi-Fi PC Sync (PIN-Based File Transfer)</h3>
+        <p><strong>Permissions:</strong> <code>FOREGROUND_SERVICE_DATA_SYNC</code>, <code>INTERNET</code>, <code>ACCESS_NETWORK_STATE</code>, <code>ACCESS_WIFI_STATE</code>.</p>
+        <p>Enables wireless music file transfer between your PC browser and your phone using a secure 6-digit PIN over your private local Wi-Fi network. No data or files ever travel through external cloud servers.</p>
+
+        <h3>D. Offline AI Subtitles (Speech Recognition)</h3>
+        <p><strong>Technology:</strong> Android on-device <code>SpeechRecognizer</code>.</p>
+        <p>Generates dual subtitles entirely offline using native Google voice language models installed on your phone (supporting Hindi, Tamil, Telugu, Marathi, Bengali, and English). Audio is never uploaded or recorded.</p>
+
+        <h3>E. Audio Output Device Profiles</h3>
+        <p><strong>Technology:</strong> Android <code>AudioManager</code>.</p>
+        <p>Detects when you connect Earbuds, Headphones, Car Audio, or Phone Speakers to automatically apply your preferred Equalizer presets and Bluetooth AV lip-sync delay compensations.</p>
+
+        <h3>F. Synced Lyrics (LRCLIB)</h3>
+        <p>When you play a track, gobeats queries public lyrics databases (LRCLIB) to fetch time-synchronized lyrics using only track title and artist name. No device identifiers, user accounts, or telemetry data are shared.</p>
+
+        <h2>2. Data Retention & Deletion</h2>
+        <p>All app-generated data (playlists, listening stats, equalizer presets, cached lyrics) resides purely on your device. You can permanently delete all data at any time by clearing the application storage via <code>Settings &gt; Apps &gt; gobeats &gt; Storage &gt; Clear Data</code> or by uninstalling the application.</p>
+
+        <h2>3. Children's Privacy</h2>
+        <p>gobeats does not collect personal data from anyone, including children under 13. The application complies fully with COPPA and GDPR regulations.</p>
+
+        <h2>4. Commercial Terms & Future Monetization Rights</h2>
+        <div class="highlight-card">
+            <h3>💳 Pricing, Licensing & Developer Autonomy</h3>
+            <p><strong>gobeats</strong> is currently distributed free of charge with all baseline and core features unlocked.</p>
+            <p>The developer of gobeats retains <strong>complete autonomy and all commercial rights</strong> to introduce monetization models at any time in subsequent updates. This includes, but is not limited to, introducing optional paid premium tiers (<em>gobeats PRO</em>), one-time lifetime licenses, optional subscription plans, or in-app billing through Google Play.</p>
+            <p>While core on-device playback functionality remains privacy-respecting and offline-first, future updates, advanced DSP features, expanded AI capabilities, or cloud extensions may be offered as optional paid upgrades at the developer's sole discretion.</p>
+        </div>
+
+        <h2>5. Contact Information</h2>
+        <p>For questions or support regarding this Privacy Policy:</p>
+        <ul>
+            <li><strong>Email:</strong> support@gobeats.app</li>
+            <li><strong>Developer:</strong> gobeats Audio Lab</li>
+        </ul>
+
+        <footer>
+            &copy; 2026 gobeats. All rights reserved.
+        </footer>
+    </div>
+</body>
+</html>

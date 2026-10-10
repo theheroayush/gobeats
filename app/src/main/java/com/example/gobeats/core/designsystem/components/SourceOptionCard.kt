@@ -106,25 +106,33 @@ fun SourceOptionCard(
 
             // Text Info
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
                         text = title,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
-                        color = GobeatsTextPrimary
+                        color = GobeatsTextPrimary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (badgeText != null) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .background(GobeatsBadgeBlueBg, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = GobeatsBadgeBlueBg
                         ) {
                             Text(
                                 text = badgeText,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = GobeatsBadgeBlue
+                                fontWeight = FontWeight.SemiBold,
+                                color = GobeatsBadgeBlue,
+                                softWrap = false,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                             )
                         }
                     }

@@ -9,12 +9,15 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.example.gobeats.core.database.GobeatsDatabaseHelper
+import com.example.gobeats.core.model.DualSubtitleTrack
 import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.RepeatMode
 import com.example.gobeats.core.model.Track
 import com.example.gobeats.core.model.VideoAspectMode
 import com.example.gobeats.core.model.VideoResumePrompt
 import com.example.gobeats.core.playback.ProcessDeathPersistenceEngine
+import com.example.gobeats.core.video.AiSubtitleEngine
+import com.example.gobeats.core.video.OfflineSkipIntroDetector
 import com.example.gobeats.core.video.SubtitleDetector
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
@@ -48,6 +51,14 @@ class PlaybackConnection(
     private var baseTrackVolume: Float = 1.0f
     private var fadeInJob: Job? = null
     private var settingsRepo: com.example.gobeats.data.repository.SettingsRepository? = null
+
+    private var lastTrackPlayedId: String? = null
+    private var lastTrackStartTimestampMs: Long = 0L
+    private val lyricsFetcher by lazy { com.example.gobeats.core.lyrics.LrclibLyricsFetcher(context) }
+
+    val audioSessionId: StateFlow<Int> =
+        (context.applicationContext as? com.example.gobeats.GobeatsApplication)?.equalizerManager?.audioSessionId
+            ?: MutableStateFlow(0).asStateFlow()
 
     init {
         initController()
@@ -83,6 +94,27 @@ class PlaybackConnection(
                         state.isPlaying
                     )
                 } catch (_: Exception) {}
+            }
+        }
+
+        val app = context.applicationContext as? com.example.gobeats.GobeatsApplication
+        if (app != null) {
+            scope.launch {
+                app.audioDeviceProfileManager.currentProfile.collectLatest { profile ->
+                    _playbackState.update {
+                        it.copy(
+                            currentAudioDeviceProfile = profile,
+                            avDelayMs = profile.avDelayMs
+                        )
+                    }
+                }
+            }
+            scope.launch {
+                app.dialogueBoostProcessor.mode.collectLatest { boostMode ->
+                    _playbackState.update {
+                        it.copy(dialogueBoostMode = boostMode)
+                    }
+                }
             }
         }
     }
@@ -146,11 +178,45 @@ class PlaybackConnection(
                     )
                 }
 
+                // Log telemetry for previously active track
+                val prevTrackId = lastTrackPlayedId
+                if (prevTrackId != null && lastTrackStartTimestampMs > 0) {
+                    val durationListened = System.currentTimeMillis() - lastTrackStartTimestampMs
+                    val isSkipped = durationListened in 1000L..15000L
+                    scope.launch(Dispatchers.IO) {
+                        dbHelper.recordPlaybackTelemetry(
+                            trackId = prevTrackId,
+                            listenDurationMs = durationListened,
+                            isCompleted = false,
+                            isSkipped = isSkipped
+                        )
+                    }
+                }
+
                 if (currentTrack != null) {
+                    lastTrackPlayedId = currentTrack.id
+                    lastTrackStartTimestampMs = System.currentTimeMillis()
+                    lyricsFetcher.prefetchLyricsAsync(currentTrack)
+
                     if (currentTrack.isVideo) {
                         checkAndShowVideoResumePrompt(currentTrack.id)
+                        val introSeg = OfflineSkipIntroDetector.detectIntroSegment(currentTrack)
+                        _playbackState.update {
+                            it.copy(
+                                activeSkipIntroSegment = introSeg,
+                                isSkipIntroVisible = OfflineSkipIntroDetector.isSkipIntroActive(0L, introSeg)
+                            )
+                        }
                     } else {
-                        _playbackState.update { it.copy(resumePrompt = null) }
+                        _playbackState.update {
+                            it.copy(
+                                resumePrompt = null,
+                                activeSkipIntroSegment = null,
+                                isSkipIntroVisible = false,
+                                activePrimarySubtitleText = null,
+                                activeSecondarySubtitleText = null
+                            )
+                        }
                     }
                     scope.launch(Dispatchers.IO) {
                         dbHelper.recordTrackPlayed(currentTrack.id)
@@ -184,6 +250,18 @@ class PlaybackConnection(
                         it.copy(durationMs = player.duration.coerceAtLeast(0L))
                     }
                 } else if (playbackState == Player.STATE_ENDED) {
+                    val finishedId = lastTrackPlayedId
+                    if (finishedId != null) {
+                        val durationListened = System.currentTimeMillis() - lastTrackStartTimestampMs
+                        scope.launch(Dispatchers.IO) {
+                            dbHelper.recordPlaybackTelemetry(
+                                trackId = finishedId,
+                                listenDurationMs = durationListened,
+                                isCompleted = true,
+                                isSkipped = false
+                            )
+                        }
+                    }
                     onTrackEndedListener?.invoke()
                 }
             }
@@ -482,11 +560,25 @@ class PlaybackConnection(
                         )
                     }
 
+                    val pos = player.currentPosition.coerceAtLeast(0L)
+                    val introSeg = _playbackState.value.activeSkipIntroSegment
+                    val isIntroActive = if (introSeg != null) {
+                        OfflineSkipIntroDetector.isSkipIntroActive(pos, introSeg)
+                    } else false
+
+                    val primTrack = _playbackState.value.primarySubtitleTrack
+                    val secTrack = _playbackState.value.secondarySubtitleTrack
+                    val primText = primTrack?.cues?.find { pos in it.startMs..it.endMs }?.text
+                    val secText = secTrack?.cues?.find { pos in it.startMs..it.endMs }?.text
+
                     _playbackState.update {
                         it.copy(
-                            currentPositionMs = player.currentPosition.coerceAtLeast(0L),
+                            currentPositionMs = pos,
                             durationMs = player.duration.coerceAtLeast(0L),
-                            videoStats = liveStats ?: it.videoStats
+                            videoStats = liveStats ?: it.videoStats,
+                            isSkipIntroVisible = isIntroActive,
+                            activePrimarySubtitleText = primText,
+                            activeSecondarySubtitleText = secText
                         )
                     }
                 }
@@ -542,14 +634,19 @@ class PlaybackConnection(
                     if (restoredTracks.isNotEmpty()) {
                         val targetIndex = restoredTracks.indexOfFirst { it.id == savedState.currentTrackId }.coerceAtLeast(0)
                         val activeTrack = restoredTracks.getOrNull(targetIndex)
-                        val mediaItems = restoredTracks.map { buildMediaItem(it) }
+                        val maxWindowRadius = 25
+                        val windowStart = kotlin.math.max(0, targetIndex - maxWindowRadius)
+                        val windowEnd = kotlin.math.min(restoredTracks.size, targetIndex + maxWindowRadius + 1)
+                        val windowedTracks = restoredTracks.subList(windowStart, windowEnd)
+                        val mediaItems = windowedTracks.map { buildMediaItem(it) }
+                        val windowIndex = targetIndex - windowStart
                         val safePosition = savedState.positionMs.coerceAtLeast(0L)
 
                         withContext(Dispatchers.Main) {
                             val activePlayer = controller ?: return@withContext
                             if (activePlayer.mediaItemCount == 0) {
                                 currentQueue = restoredTracks
-                                activePlayer.setMediaItems(mediaItems, targetIndex, safePosition)
+                                activePlayer.setMediaItems(mediaItems, windowIndex, safePosition)
                                 activePlayer.prepare()
                                 activePlayer.playWhenReady = false // strictly paused on process death restoration
                                 _playbackState.update {
@@ -650,9 +747,15 @@ class PlaybackConnection(
 
         currentQueue = queue
 
-        val mediaItems = queue.map { qTrack -> buildMediaItem(qTrack) }
+        // Windowed queue across IPC to prevent TransactionTooLargeException (1MB Android Binder limit)
+        val maxWindowRadius = 25
+        val windowStart = kotlin.math.max(0, trackIndex - maxWindowRadius)
+        val windowEnd = kotlin.math.min(queue.size, trackIndex + maxWindowRadius + 1)
+        val windowedTracks = queue.subList(windowStart, windowEnd)
+        val windowedMediaItems = windowedTracks.map { qTrack -> buildMediaItem(qTrack) }
+        val windowIndex = trackIndex - windowStart
 
-        player.setMediaItems(mediaItems, trackIndex, 0L)
+        player.setMediaItems(windowedMediaItems, windowIndex, 0L)
         player.prepare()
         player.play()
 
@@ -670,8 +773,23 @@ class PlaybackConnection(
 
         if (track.isVideo) {
             checkAndShowVideoResumePrompt(track.id)
+            val introSeg = OfflineSkipIntroDetector.detectIntroSegment(track)
+            _playbackState.update {
+                it.copy(
+                    activeSkipIntroSegment = introSeg,
+                    isSkipIntroVisible = OfflineSkipIntroDetector.isSkipIntroActive(0L, introSeg)
+                )
+            }
         } else {
-            _playbackState.update { it.copy(resumePrompt = null) }
+            _playbackState.update {
+                it.copy(
+                    resumePrompt = null,
+                    activeSkipIntroSegment = null,
+                    isSkipIntroVisible = false,
+                    activePrimarySubtitleText = null,
+                    activeSecondarySubtitleText = null
+                )
+            }
         }
         persistCurrentPlaybackState()
     }
@@ -692,7 +810,24 @@ class PlaybackConnection(
         _playbackState.update { it.copy(isCrossfadeActive = false) }
         player.volume = baseTrackVolume
         player.seekTo(positionMs)
-        _playbackState.update { it.copy(currentPositionMs = positionMs) }
+
+        val introSeg = _playbackState.value.activeSkipIntroSegment
+        val isIntroActive = if (introSeg != null) {
+            OfflineSkipIntroDetector.isSkipIntroActive(positionMs, introSeg)
+        } else false
+        val primTrack = _playbackState.value.primarySubtitleTrack
+        val secTrack = _playbackState.value.secondarySubtitleTrack
+        val primText = primTrack?.cues?.find { positionMs in it.startMs..it.endMs }?.text
+        val secText = secTrack?.cues?.find { positionMs in it.startMs..it.endMs }?.text
+
+        _playbackState.update {
+            it.copy(
+                currentPositionMs = positionMs,
+                isSkipIntroVisible = isIntroActive,
+                activePrimarySubtitleText = primText,
+                activeSecondarySubtitleText = secText
+            )
+        }
         persistCurrentPlaybackState()
     }
 
@@ -703,6 +838,11 @@ class PlaybackConnection(
         player.volume = baseTrackVolume
         if (player.hasNextMediaItem()) {
             player.seekToNextMediaItem()
+        } else {
+            val nextIdx = _playbackState.value.queueIndex + 1
+            if (nextIdx < currentQueue.size) {
+                playTrack(currentQueue[nextIdx], currentQueue)
+            }
         }
     }
 
@@ -716,7 +856,12 @@ class PlaybackConnection(
         } else if (player.hasPreviousMediaItem()) {
             player.seekToPreviousMediaItem()
         } else {
-            player.seekTo(0L)
+            val prevIdx = _playbackState.value.queueIndex - 1
+            if (prevIdx >= 0 && prevIdx < currentQueue.size) {
+                playTrack(currentQueue[prevIdx], currentQueue)
+            } else {
+                player.seekTo(0L)
+            }
         }
     }
 
@@ -1044,6 +1189,61 @@ class PlaybackConnection(
             delay(350)
             selectSubtitleTrack(newIndex)
         }
+    }
+
+    fun setPrimarySubtitleTrack(track: DualSubtitleTrack?) {
+        val pos = controller?.currentPosition ?: 0L
+        val activeText = track?.cues?.find { pos in it.startMs..it.endMs }?.text
+        _playbackState.update {
+            it.copy(
+                primarySubtitleTrack = track,
+                activePrimarySubtitleText = activeText
+            )
+        }
+    }
+
+    fun setSecondarySubtitleTrack(track: DualSubtitleTrack?) {
+        val pos = controller?.currentPosition ?: 0L
+        val activeText = track?.cues?.find { pos in it.startMs..it.endMs }?.text
+        _playbackState.update {
+            it.copy(
+                secondarySubtitleTrack = track,
+                activeSecondarySubtitleText = activeText
+            )
+        }
+    }
+
+    fun loadAiSubtitleTrack(track: Track, languageCode: String, isPrimary: Boolean = true) {
+        scope.launch {
+            val dualTrack = AiSubtitleEngine.getOrGenerateDualTrack(dbHelper, track, languageCode)
+            if (isPrimary) {
+                setPrimarySubtitleTrack(dualTrack)
+            } else {
+                setSecondarySubtitleTrack(dualTrack)
+            }
+        }
+    }
+
+    fun setDialogueBoostMode(mode: com.example.gobeats.core.model.DialogueBoostMode) {
+        val app = context.applicationContext as? com.example.gobeats.GobeatsApplication
+        app?.dialogueBoostProcessor?.setMode(mode)
+        _playbackState.update { it.copy(dialogueBoostMode = mode) }
+    }
+
+    fun setAvDelay(delayMs: Long) {
+        val app = context.applicationContext as? com.example.gobeats.GobeatsApplication
+        val currentProfile = _playbackState.value.currentAudioDeviceProfile
+        if (app != null && currentProfile != null) {
+            app.audioDeviceProfileManager.setAvDelay(currentProfile.deviceId, delayMs)
+        }
+        _playbackState.update { it.copy(avDelayMs = delayMs) }
+    }
+
+    fun skipIntro() {
+        val seg = _playbackState.value.activeSkipIntroSegment ?: return
+        val targetMs = OfflineSkipIntroDetector.getSkipTargetMs(seg)
+        seekTo(targetMs)
+        _playbackState.update { it.copy(isSkipIntroVisible = false) }
     }
 
     fun setVideoLoudnessBoost(percent: Int) {

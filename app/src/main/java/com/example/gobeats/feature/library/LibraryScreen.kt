@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
@@ -115,6 +116,8 @@ fun LibraryScreen(
     onOpenVideoUri: (android.net.Uri) -> Unit = {},
     onRescanClick: () -> Unit = {},
     onEditTags: (Track) -> Unit = {},
+    currentTrackId: String? = null,
+    isPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -436,6 +439,17 @@ fun LibraryScreen(
                             if (nextCat == "Videos" && videos.isEmpty()) {
                                 requestMediaAccessAndScan()
                             }
+                        }
+                    )
+                }
+                item {
+                    LibraryCategoryTile(
+                        title = "Playlists",
+                        countText = "${playlists.size}",
+                        icon = Icons.AutoMirrored.Filled.QueueMusic,
+                        iconTint = Color(0xFFA78BFA),
+                        onClick = {
+                            onSeeAllPlaylists()
                         }
                     )
                 }
@@ -883,7 +897,7 @@ fun LibraryScreen(
                 items(videos) { videoTrack ->
                     TrackItemRow(
                         track = videoTrack,
-                        isPlaying = false,
+                        isPlaying = (videoTrack.id == currentTrackId && isPlaying),
                         onClick = { onTrackClick(videoTrack, videos) },
                         onToggleFavorite = { onToggleFavorite(videoTrack) },
                         onPlayNext = { onPlayNext(videoTrack) },
@@ -968,7 +982,7 @@ fun LibraryScreen(
             items(displayList) { track ->
                 TrackItemRow(
                     track = track,
-                    isPlaying = false,
+                    isPlaying = (track.id == currentTrackId && isPlaying),
                     onClick = { onTrackClick(track, sortedTracks) },
                     onToggleFavorite = { onToggleFavorite(track) },
                     onPlayNext = { onPlayNext(track) },

@@ -98,7 +98,22 @@ class LyricsRepository(private val context: Context) {
             if (it.lines.isNotEmpty()) return@withContext it
         }
 
-        // 2. Check user-saved / cached lyrics in app internal storage
+        // 2. Check SQLite lyrics cache
+        try {
+            val dbCached = com.example.gobeats.core.database.GobeatsDatabaseHelper.getInstance(context).getCachedLyrics(track.id)
+            if (dbCached != null) {
+                val content = dbCached.syncedLyrics ?: dbCached.plainLyrics
+                if (!content.isNullOrBlank()) {
+                    val parsed = LrcParser.parse(content, source = dbCached.source)
+                    if (parsed.lines.isNotEmpty()) {
+                        cache[track.id] = parsed
+                        return@withContext parsed
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 3. Check user-saved / cached lyrics in app internal storage
         val localCustomFile = File(lyricsDir, "${track.id}.lrc")
         if (localCustomFile.exists() && localCustomFile.canRead()) {
             val content = localCustomFile.readText()
@@ -150,10 +165,18 @@ class LyricsRepository(private val context: Context) {
             )
 
             if (!onlineContent.isNullOrBlank()) {
-                // Permanently save to disk for 100% offline access next time!
+                // Permanently save to disk and SQLite for 100% offline access next time!
                 val localCustomFile = File(lyricsDir, "${track.id}.lrc")
                 localCustomFile.writeText(onlineContent)
                 val parsed = LrcParser.parse(onlineContent, source = "lrclib")
+                try {
+                    com.example.gobeats.core.database.GobeatsDatabaseHelper.getInstance(context).saveCachedLyrics(
+                        trackId = track.id,
+                        plainLyrics = if (!parsed.isSynced) onlineContent else null,
+                        syncedLyrics = if (parsed.isSynced) onlineContent else null,
+                        source = "LRCLIB"
+                    )
+                } catch (_: Exception) {}
                 cache[track.id] = parsed
                 return@withContext parsed
             }

@@ -76,6 +76,9 @@ import androidx.media3.ui.PlayerView
 import com.example.gobeats.core.designsystem.components.formatDuration
 import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.VideoAspectMode
+import com.example.gobeats.core.video.DualSubtitleOverlay
+import com.example.gobeats.core.video.OfflineSkipIntroDetector
+import com.example.gobeats.core.video.SkipIntroPill
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsBorderSubtle
 import kotlinx.coroutines.delay
@@ -165,13 +168,16 @@ fun FullscreenVideoPlayer(
         contentAlignment = Alignment.Center
     ) {
         val playerView = remember {
-            PlayerView(context).apply {
+            val view = android.view.LayoutInflater.from(context).inflate(
+                com.example.gobeats.R.layout.view_media3_texture_player,
+                null
+            ) as PlayerView
+            view.apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
                 useController = false
-                setBackgroundColor(android.graphics.Color.BLACK)
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 keepScreenOn = true
             }
@@ -180,7 +186,9 @@ fun FullscreenVideoPlayer(
         DisposableEffect(player) {
             playerView.player = player
             onDispose {
-                playerView.player = null
+                if (playerView.player == player && player?.isPlaying != true) {
+                    playerView.player = null
+                }
             }
         }
 
@@ -503,6 +511,28 @@ fun FullscreenVideoPlayer(
                     }
                 }
             }
+        }
+
+        // Dual Subtitle Overlay (Primary Bold Amber + Secondary Crisp Cyan White stacked)
+        DualSubtitleOverlay(
+            state = state,
+            isControlsVisible = showControlsOverlay && !state.isTouchLocked,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        // Skip Intro Button Overlay
+        state.activeSkipIntroSegment?.let { introSeg ->
+            SkipIntroPill(
+                visible = state.isSkipIntroVisible && !state.isTouchLocked,
+                segment = introSeg,
+                onSkip = {
+                    onSeek(OfflineSkipIntroDetector.getSkipTargetMs(introSeg))
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 24.dp, bottom = if (showControlsOverlay && !state.isTouchLocked) 112.dp else 40.dp)
+            )
         }
 
         // Resume Playback Prompt Banner Overlay

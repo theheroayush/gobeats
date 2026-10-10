@@ -46,6 +46,10 @@ class EqualizerManager(private val context: Context) {
     private var virtualizer: Virtualizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var currentSessionId: Int = 0
+    private var dialogueBoostOffsetsMb: Map<Int, Int> = emptyMap()
+
+    private val _audioSessionId = MutableStateFlow(0)
+    val audioSessionId: StateFlow<Int> = _audioSessionId.asStateFlow()
 
     private val _state = MutableStateFlow(loadInitialState())
     val state: StateFlow<EqualizerState> = _state.asStateFlow()
@@ -107,6 +111,7 @@ class EqualizerManager(private val context: Context) {
         if (sessionId <= 0 || sessionId == currentSessionId) return
         release()
         currentSessionId = sessionId
+        _audioSessionId.value = sessionId
 
         try {
             equalizer = Equalizer(0, sessionId).apply {
@@ -119,7 +124,9 @@ class EqualizerManager(private val context: Context) {
                     val freq = getCenterFreq(idx.toShort()) / 1000
                     val saved = _state.value.bands.find { it.index == idx }?.levelMb ?: 0
                     val clamped = saved.coerceIn(minMb, maxMb).toShort()
-                    setBandLevel(idx.toShort(), clamped)
+                    val boost = dialogueBoostOffsetsMb[idx] ?: 0
+                    val effective = (saved + boost).coerceIn(minMb, maxMb).toShort()
+                    setBandLevel(idx.toShort(), effective)
 
                     EqualizerBand(
                         index = idx,
@@ -156,13 +163,34 @@ class EqualizerManager(private val context: Context) {
         }
     }
 
+    fun setDialogueBoostOffsets(offsets: Map<Int, Int>) {
+        dialogueBoostOffsetsMb = offsets
+        applyEffectiveBandsToHardware()
+    }
+
+    fun getDialogueBoostOffsets(): Map<Int, Int> = dialogueBoostOffsetsMb
+
+    fun applyEffectiveBandsToHardware() {
+        val eq = equalizer ?: return
+        val current = _state.value
+        current.bands.forEach { band ->
+            val boost = dialogueBoostOffsetsMb[band.index] ?: 0
+            val effective = (band.levelMb + boost).coerceIn(band.minLevelMb, band.maxLevelMb)
+            try {
+                eq.setBandLevel(band.index.toShort(), effective.toShort())
+            } catch (_: Exception) {}
+        }
+    }
+
     fun setBandLevel(bandIndex: Int, levelMb: Int) {
         val current = _state.value
         val updated = current.bands.map { band ->
             if (band.index == bandIndex) {
                 val clamped = levelMb.coerceIn(band.minLevelMb, band.maxLevelMb)
+                val boost = dialogueBoostOffsetsMb[bandIndex] ?: 0
+                val effective = (clamped + boost).coerceIn(band.minLevelMb, band.maxLevelMb)
                 try {
-                    equalizer?.setBandLevel(bandIndex.toShort(), clamped.toShort())
+                    equalizer?.setBandLevel(bandIndex.toShort(), effective.toShort())
                 } catch (_: Exception) {}
                 prefs.edit().putInt("eq_band_$bandIndex", clamped).apply()
                 band.copy(levelMb = clamped)
@@ -180,8 +208,10 @@ class EqualizerManager(private val context: Context) {
         val updated = current.bands.mapIndexed { idx, band ->
             val level = levels.getOrElse(idx) { 0 }
             val clamped = level.coerceIn(band.minLevelMb, band.maxLevelMb)
+            val boost = dialogueBoostOffsetsMb[idx] ?: 0
+            val effective = (clamped + boost).coerceIn(band.minLevelMb, band.maxLevelMb)
             try {
-                equalizer?.setBandLevel(idx.toShort(), clamped.toShort())
+                equalizer?.setBandLevel(idx.toShort(), effective.toShort())
             } catch (_: Exception) {}
             prefs.edit().putInt("eq_band_$idx", clamped).apply()
             band.copy(levelMb = clamped)
@@ -202,8 +232,10 @@ class EqualizerManager(private val context: Context) {
         val updatedBands = current.bands.mapIndexed { idx, band ->
             val targetMb = AutoEqCatalog.interpolateGainMb(profile, band.centerFreqHz)
             val clamped = targetMb.coerceIn(band.minLevelMb, band.maxLevelMb)
+            val boost = dialogueBoostOffsetsMb[idx] ?: 0
+            val effective = (clamped + boost).coerceIn(band.minLevelMb, band.maxLevelMb)
             try {
-                equalizer?.setBandLevel(idx.toShort(), clamped.toShort())
+                equalizer?.setBandLevel(idx.toShort(), effective.toShort())
             } catch (_: Exception) {}
             prefs.edit().putInt("eq_band_$idx", clamped).apply()
             band.copy(levelMb = clamped)
@@ -374,5 +406,6 @@ class EqualizerManager(private val context: Context) {
         virtualizer = null
         loudnessEnhancer = null
         currentSessionId = 0
+        _audioSessionId.value = 0
     }
 }

@@ -90,6 +90,9 @@ import com.example.gobeats.theme.GobeatsSurface
 import com.example.gobeats.theme.GobeatsTextMuted
 import com.example.gobeats.theme.GobeatsTextPrimary
 import com.example.gobeats.theme.GobeatsTheme
+import com.example.gobeats.core.util.safePop
+import com.example.gobeats.core.util.safePush
+import com.example.gobeats.feature.onboarding.NameSetupScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -99,6 +102,7 @@ import kotlinx.coroutines.withContext
 
 sealed class Destination {
     data object Welcome : Destination()
+    data object NameSetup : Destination()
     data object SourceSelection : Destination()
     data object FolderSetup : Destination()
     data object MainApp : Destination()
@@ -369,17 +373,35 @@ fun GobeatsApp(
         scope.launch {
             app.libraryRepository.cleanLegacyMockData()
             refreshLibrary()
+            val hasAudio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.READ_MEDIA_AUDIO
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    context, android.Manifest.permission.READ_EXTERNAL_STORAGE
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            if (hasAudio) {
+                app.libraryRepository.scanMediaStore().collect { progress ->
+                    if (progress.isComplete) refreshLibrary()
+                }
+            }
         }
         app.libraryRepository.dbChangeTrigger.collectLatest {
             refreshLibrary()
         }
     }
 
+    val isScanning by app.libraryRepository.isScanning.collectAsState()
+    val scanProgress by app.libraryRepository.scanProgress.collectAsState()
+    val userProfile by app.settingsRepository.userProfile.collectAsState()
+
     LaunchedEffect(incomingTrackFlow) {
         incomingTrackFlow?.collectLatest { track ->
             if (track != null) {
                 showNowPlayingSheet = true
-                if (navStack.any { it is Destination.Welcome || it is Destination.SourceSelection || it is Destination.FolderSetup }) {
+                if (navStack.any { it is Destination.Welcome || it is Destination.NameSetup || it is Destination.SourceSelection || it is Destination.FolderSetup }) {
                     navStack.clear()
                     navStack.add(Destination.MainApp)
                 }
@@ -389,14 +411,14 @@ fun GobeatsApp(
     }
 
     BackHandler(enabled = navStack.size > 1) {
-        navStack.removeAt(navStack.lastIndex)
+        navStack.safePop()
     }
 
     Box(modifier = Modifier.fillMaxSize().background(GobeatsObsidian)) {
         when (val dest = currentDestination) {
             is Destination.Welcome -> {
                 WelcomeScreen(
-                    onGetStarted = { navStack.add(Destination.SourceSelection) },
+                    onGetStarted = { navStack.safePush(Destination.NameSetup) },
                     onExploreFirst = {
                         onOnboardingCompleted()
                         navStack.clear()
@@ -409,10 +431,32 @@ fun GobeatsApp(
                     }
                 )
             }
+            is Destination.NameSetup -> {
+                NameSetupScreen(
+                    settingsRepository = app.settingsRepository,
+                    onContinue = { navStack.safePush(Destination.SourceSelection) },
+                    onBack = { navStack.safePop() },
+                    onSkip = {
+                        onOnboardingCompleted()
+                        navStack.clear()
+                        navStack.add(Destination.MainApp)
+                    }
+                )
+            }
             is Destination.SourceSelection -> {
                 SourceSelectionScreen(
-                    onContinue = { navStack.add(Destination.FolderSetup) },
-                    onBack = { navStack.removeAt(navStack.lastIndex) },
+                    syncServer = app.syncServer,
+                    onContinue = { chosenSource ->
+                        if (chosenSource == "computer") {
+                            com.example.gobeats.core.sync.GobeatsSyncService.start(context)
+                            onOnboardingCompleted()
+                            navStack.clear()
+                            navStack.add(Destination.MainApp)
+                        } else {
+                            navStack.safePush(Destination.FolderSetup)
+                        }
+                    },
+                    onBack = { navStack.safePop() },
                     onSkip = {
                         onOnboardingCompleted()
                         navStack.clear()
@@ -427,7 +471,8 @@ fun GobeatsApp(
                         onOnboardingCompleted()
                         navStack.clear()
                         navStack.add(Destination.MainApp)
-                    }
+                    },
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.Folders -> {
@@ -436,7 +481,7 @@ fun GobeatsApp(
                     folderBrowserRepository = app.folderBrowserRepository,
                     playbackRepository = app.playbackRepository,
                     libraryRepository = app.libraryRepository,
-                    onBack = { navStack.removeAt(navStack.lastIndex) },
+                    onBack = { navStack.safePop() },
                     onTrackClick = { track, queue ->
                         app.playbackRepository.playTrack(track, queue)
                         if (track.isVideo) showNowPlayingSheet = true
@@ -468,7 +513,7 @@ fun GobeatsApp(
                     onAddToQueue = { track ->
                         app.playbackRepository.addToQueue(track)
                     },
-                    onBack = { navStack.removeAt(navStack.lastIndex) }
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.Settings -> {
@@ -476,7 +521,7 @@ fun GobeatsApp(
                     settingsRepository = app.settingsRepository,
                     equalizerManager = app.equalizerManager,
                     onDevicesClick = {
-                        navStack.removeAt(navStack.lastIndex)
+                        navStack.safePop()
                         selectedTab = 3
                     },
                     onSearchClick = { navStack.add(Destination.Search) },
@@ -516,7 +561,7 @@ fun GobeatsApp(
                             refreshLibrary()
                         }
                     },
-                    onBack = { navStack.removeAt(navStack.lastIndex) }
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.AlbumDetail -> {
@@ -543,7 +588,7 @@ fun GobeatsApp(
                     onEditTags = { track ->
                         trackToEdit = track
                     },
-                    onBack = { navStack.removeAt(navStack.lastIndex) }
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.ArtistDetail -> {
@@ -570,7 +615,7 @@ fun GobeatsApp(
                     onEditTags = { track ->
                         trackToEdit = track
                     },
-                    onBack = { navStack.removeAt(navStack.lastIndex) }
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.PlaylistDetail -> {
@@ -588,7 +633,7 @@ fun GobeatsApp(
                     onAddToQueue = { track ->
                         app.playbackRepository.addToQueue(track)
                     },
-                    onBack = { navStack.removeAt(navStack.lastIndex) }
+                    onBack = { navStack.safePop() }
                 )
             }
             is Destination.MainApp -> {
@@ -701,53 +746,64 @@ fun GobeatsApp(
                         ) { tab ->
                             when (tab) {
                                 0 -> HomeScreen(
-                                playbackState = playbackState,
-                                recentlyPlayed = recentlyPlayed,
-                                recentlyAdded = recentlyAdded,
-                                albums = allAlbums,
-                                artists = allArtists,
-                                onTrackClick = { track, queue ->
-                                    app.playbackRepository.playTrack(track, queue)
-                                    if (track.isVideo) showNowPlayingSheet = true
-                                },
-                                onAlbumClick = { album ->
-                                    navStack.add(Destination.AlbumDetail(album))
-                                },
-                                onArtistClick = { artist ->
-                                    navStack.add(Destination.ArtistDetail(artist))
-                                },
-                                onSearchClick = { navStack.add(Destination.Search) },
-                                onSettingsClick = { selectedTab = 4 },
-                                onSeeAllContinue = { selectedTab = 1 },
-                                onSeeAllRecentlyPlayed = { selectedTab = 1 },
-                                onSeeAllRecentlyAdded = { selectedTab = 1 },
-                                onPlayNext = { track ->
-                                    app.playbackRepository.playNextTrack(track)
-                                },
-                                onAddToQueue = { track ->
-                                    app.playbackRepository.addToQueue(track)
-                                },
-                                onEditTags = { track ->
-                                    trackToEdit = track
-                                }
-                            )
+                                    playbackState = playbackState,
+                                    recentlyPlayed = recentlyPlayed,
+                                    recentlyAdded = recentlyAdded,
+                                    albums = allAlbums,
+                                    artists = allArtists,
+                                    playlists = allPlaylists,
+                                    userName = userProfile.name,
+                                    isScanning = isScanning,
+                                    scannedCount = scanProgress.scannedCount,
+                                    onTrackClick = { track, queue ->
+                                        app.playbackRepository.playTrack(track, queue)
+                                        if (track.isVideo) showNowPlayingSheet = true
+                                    },
+                                    onAlbumClick = { album ->
+                                        navStack.safePush(Destination.AlbumDetail(album))
+                                    },
+                                    onArtistClick = { artist ->
+                                        navStack.safePush(Destination.ArtistDetail(artist))
+                                    },
+                                    onPlaylistClick = { playlist ->
+                                        navStack.safePush(Destination.PlaylistDetail(playlist))
+                                    },
+                                    onCreatePlaylistClick = { selectedTab = 2 },
+                                    onSeeAllPlaylists = { selectedTab = 2 },
+                                    onSearchClick = { navStack.safePush(Destination.Search) },
+                                    onSettingsClick = { selectedTab = 4 },
+                                    onSeeAllContinue = { selectedTab = 1 },
+                                    onSeeAllRecentlyPlayed = { selectedTab = 1 },
+                                    onSeeAllRecentlyAdded = { selectedTab = 1 },
+                                    onPlayNext = { track ->
+                                        app.playbackRepository.playNextTrack(track)
+                                    },
+                                    onAddToQueue = { track ->
+                                        app.playbackRepository.addToQueue(track)
+                                    },
+                                    onEditTags = { track ->
+                                        trackToEdit = track
+                                    }
+                                )
                             1 -> LibraryScreen(
                                 tracks = allTracks,
                                 videos = allVideos,
                                 albums = allAlbums,
                                 artists = allArtists,
                                 playlists = allPlaylists,
-                                onFoldersCategoryClick = { navStack.add(Destination.Folders()) },
+                                currentTrackId = playbackState.currentTrack?.id,
+                                isPlaying = playbackState.isPlaying,
+                                onFoldersCategoryClick = { navStack.safePush(Destination.Folders()) },
                                 onAlbumClick = { album ->
-                                    navStack.add(Destination.AlbumDetail(album))
+                                    navStack.safePush(Destination.AlbumDetail(album))
                                 },
                                 onArtistClick = { artist ->
-                                    navStack.add(Destination.ArtistDetail(artist))
+                                    navStack.safePush(Destination.ArtistDetail(artist))
                                 },
                                 onPlaylistClick = { playlist ->
-                                    navStack.add(Destination.PlaylistDetail(playlist))
+                                    navStack.safePush(Destination.PlaylistDetail(playlist))
                                 },
-                                onSearchClick = { navStack.add(Destination.Search) },
+                                onSearchClick = { navStack.safePush(Destination.Search) },
                                 onSeeAllRecentlyAdded = {},
                                 onSeeAllPlaylists = { selectedTab = 2 },
                                 onTrackClick = { track, queue ->
@@ -847,7 +903,9 @@ fun GobeatsApp(
                                 onDevicesClick = { selectedTab = 3 },
                                 onSearchClick = { navStack.add(Destination.Search) },
                                 sleepTimerManager = app.sleepTimerManager,
-                                playbackRepository = app.playbackRepository
+                                playbackRepository = app.playbackRepository,
+                                dbHelper = app.dbHelper,
+                                onLibraryRefresh = { refreshLibrary() }
                             )
                         }
                     }

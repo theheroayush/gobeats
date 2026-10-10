@@ -55,7 +55,26 @@ class LibraryRepository(
 
     suspend fun getVideoTracks(): List<Track> = dbHelper.getVideoTracks()
 
-    fun scanMediaStore(): Flow<ScanProgress> = mediaScanner.scanMediaStore()
+    private val _isScanning = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning
+
+    private val _scanProgress = kotlinx.coroutines.flow.MutableStateFlow(ScanProgress())
+    val scanProgress: StateFlow<ScanProgress> = _scanProgress
+
+    fun scanMediaStore(): Flow<ScanProgress> = kotlinx.coroutines.flow.flow {
+        _isScanning.value = true
+        try {
+            mediaScanner.scanMediaStore().collect { progress ->
+                _scanProgress.value = progress
+                emit(progress)
+                if (progress.isComplete) {
+                    _isScanning.value = false
+                }
+            }
+        } finally {
+            _isScanning.value = false
+        }
+    }
 
     suspend fun cleanLegacyMockData() = mediaScanner.cleanLegacyMockData()
 
@@ -120,12 +139,16 @@ class PlaylistRepository(
 
     suspend fun getPlaylistTracks(playlistId: String): List<Track> =
         dbHelper.getPlaylistTracks(playlistId)
+
+    suspend fun getSmartPlaylists(): List<Playlist> =
+        dbHelper.getSmartPlaylists()
 }
 
 class PlaybackRepository(
     private val playbackConnection: PlaybackConnection
 ) {
     val playbackState: StateFlow<PlaybackUiState> = playbackConnection.playbackState
+    val audioSessionId: StateFlow<Int> = playbackConnection.audioSessionId
 
     fun getPlayer() = playbackConnection.getPlayer()
 
@@ -155,6 +178,30 @@ class PlaybackRepository(
 
     fun addExternalSubtitle(uri: Uri, customLabel: String? = null) {
         playbackConnection.addExternalSubtitle(uri, customLabel)
+    }
+
+    fun setPrimarySubtitleTrack(track: com.example.gobeats.core.model.DualSubtitleTrack?) {
+        playbackConnection.setPrimarySubtitleTrack(track)
+    }
+
+    fun setSecondarySubtitleTrack(track: com.example.gobeats.core.model.DualSubtitleTrack?) {
+        playbackConnection.setSecondarySubtitleTrack(track)
+    }
+
+    fun loadAiSubtitleTrack(track: Track, languageCode: String, isPrimary: Boolean = true) {
+        playbackConnection.loadAiSubtitleTrack(track, languageCode, isPrimary)
+    }
+
+    fun setDialogueBoostMode(mode: com.example.gobeats.core.model.DialogueBoostMode) {
+        playbackConnection.setDialogueBoostMode(mode)
+    }
+
+    fun setAvDelay(delayMs: Long) {
+        playbackConnection.setAvDelay(delayMs)
+    }
+
+    fun skipIntro() {
+        playbackConnection.skipIntro()
     }
 
     fun resumeFromSavedPosition() {
@@ -303,6 +350,12 @@ class SettingsRepository(private val context: android.content.Context) {
         )
     )
     val settings: StateFlow<AppSettings> = _settings
+
+    fun setUserName(name: String) {
+        val cleanName = name.trim().ifBlank { "Music Lover" }
+        prefs.edit().putString("profile_name", cleanName).apply()
+        _userProfile.value = _userProfile.value.copy(name = cleanName)
+    }
 
     fun updateProfile(name: String, email: String) {
         prefs.edit().putString("profile_name", name).putString("profile_email", email).apply()

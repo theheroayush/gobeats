@@ -57,18 +57,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.gobeats.core.model.DialogueBoostMode
 import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.VideoAspectMode
 import com.example.gobeats.core.model.VideoQualityOption
+import com.example.gobeats.core.video.AiSubtitleEngine
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsBorderSubtle
 import com.example.gobeats.theme.GobeatsObsidian
 import com.example.gobeats.theme.GobeatsSurfaceElevated
 import com.example.gobeats.theme.GobeatsTextMuted
 import com.example.gobeats.theme.GobeatsTextPrimary
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Sync
 
 private enum class VideoSettingsSubMenu {
     MAIN,
@@ -77,7 +82,9 @@ private enum class VideoSettingsSubMenu {
     AUDIO,
     SUBTITLES,
     ASPECT_RATIO,
-    LOUDNESS_BOOST
+    LOUDNESS_BOOST,
+    DIALOGUE_BOOST,
+    AV_DELAY
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,8 +101,12 @@ fun VideoSettingsBottomSheet(
     onToggleStatsForNerds: () -> Unit,
     onOpenSleepTimer: () -> Unit,
     onSelectLoudnessBoost: (Int) -> Unit = {},
-    onPickExternalSubtitle: (Uri) -> Unit = {}
+    onPickExternalSubtitle: (Uri) -> Unit = {},
+    onSelectAiSubtitleLanguage: (String, Boolean) -> Unit = { _, _ -> },
+    onSelectDialogueBoost: (DialogueBoostMode) -> Unit = {},
+    onSelectAvDelay: (Long) -> Unit = {}
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var currentSubMenu by remember { mutableStateOf(VideoSettingsSubMenu.MAIN) }
 
@@ -142,6 +153,8 @@ fun VideoSettingsBottomSheet(
                         VideoSettingsSubMenu.SUBTITLES -> "Subtitles / Captions"
                         VideoSettingsSubMenu.ASPECT_RATIO -> "Aspect Ratio"
                         VideoSettingsSubMenu.LOUDNESS_BOOST -> "Volume Booster (Loudness)"
+                        VideoSettingsSubMenu.DIALOGUE_BOOST -> "Dialogue Boost (Speech Clarity)"
+                        VideoSettingsSubMenu.AV_DELAY -> "Bluetooth AV Lip-Sync Delay"
                     },
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
@@ -163,6 +176,54 @@ fun VideoSettingsBottomSheet(
                 when (subMenu) {
                     VideoSettingsSubMenu.MAIN -> {
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            // Video Audio Pipeline Banner
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0x1AF59E0B),
+                                border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.35f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Video Audio Pipeline (Distinct from Music Mode)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GobeatsAmber
+                                    )
+                                    Text(
+                                        text = "Dialogue clarity, hardware AV lip-sync delay, and loudness compressor operate independently from your music bit-perfect audio settings.",
+                                        fontSize = 10.sp,
+                                        color = GobeatsTextMuted
+                                    )
+                                }
+                            }
+
+                            // Dialogue Boost (Speech Clarity)
+                            val dialogueBoostLabel = when (state.dialogueBoostMode) {
+                                DialogueBoostMode.OFF -> "Off (Natural)"
+                                DialogueBoostMode.CLEAR -> "Vocal Clarity (+4dB Formants)"
+                                DialogueBoostMode.MAXIMUM -> "Maximum Isolation (+7dB Formants)"
+                            }
+                            SettingRow(
+                                icon = Icons.Default.GraphicEq,
+                                title = "Dialogue boost",
+                                subtitle = dialogueBoostLabel,
+                                onClick = { currentSubMenu = VideoSettingsSubMenu.DIALOGUE_BOOST }
+                            )
+
+                            // Bluetooth AV Sync Delay
+                            val devProfile = state.currentAudioDeviceProfile
+                            val devName = devProfile?.name ?: "Active Device"
+                            val delayText = if (state.avDelayMs != 0L) "${state.avDelayMs} ms ($devName)" else "0 ms (In Sync)"
+                            SettingRow(
+                                icon = Icons.Default.Sync,
+                                title = "Bluetooth AV sync delay",
+                                subtitle = delayText,
+                                onClick = { currentSubMenu = VideoSettingsSubMenu.AV_DELAY }
+                            )
+
                             // 1. Quality
                             val activeQualityLabel = state.videoQualityOptions.find { it.isSelected }?.label
                                 ?: state.videoQualityOptions.find { it.isAuto }?.label
@@ -376,6 +437,52 @@ fun VideoSettingsBottomSheet(
                                     }
                                 )
                             }
+
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                text = "Offline AI Subtitles (Indian Regional & Dual)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = GobeatsAmber,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+
+                            AiSubtitleEngine.SUPPORTED_LANGUAGES.forEach { lang ->
+                                val isPrimarySelected = state.primarySubtitleTrack?.languageCode.equals(lang.code, ignoreCase = true)
+                                val isSecondarySelected = state.secondarySubtitleTrack?.languageCode.equals(lang.code, ignoreCase = true)
+                                val badgeText = when {
+                                    isPrimarySelected -> "PRIMARY"
+                                    isSecondarySelected -> "SECONDARY"
+                                    lang.isRegionalIndian -> "REGIONAL"
+                                    else -> "AI"
+                                }
+                                SelectableOptionRow(
+                                    title = "${lang.displayName} (${lang.nativeName})",
+                                    subtitle = if (isPrimarySelected) "Active as Primary (Amber)" else if (isSecondarySelected) "Active as Secondary (Cyan)" else "Tap to toggle AI subtitles",
+                                    badge = badgeText,
+                                    isSelected = isPrimarySelected || isSecondarySelected,
+                                    onClick = {
+                                        onSelectAiSubtitleLanguage(lang.code, !isPrimarySelected)
+                                        currentSubMenu = VideoSettingsSubMenu.MAIN
+                                    }
+                                )
+                            }
+
+                            SelectableOptionRow(
+                                title = "Download Offline Voice Models...",
+                                subtitle = "Open Android Voice & Speech Recognition settings",
+                                badge = "SYSTEM",
+                                isSelected = false,
+                                onClick = {
+                                    try {
+                                        context.startActivity(AiSubtitleEngine.getLanguagePackIntent("hi-IN"))
+                                    } catch (_: Exception) {
+                                        try {
+                                            context.startActivity(AiSubtitleEngine.getFallbackSettingsIntent())
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                            )
                         }
                     }
 
@@ -418,6 +525,109 @@ fun VideoSettingsBottomSheet(
                                     isSelected = state.videoAspectMode == mode,
                                     onClick = {
                                         onSelectAspectMode(mode)
+                                        currentSubMenu = VideoSettingsSubMenu.MAIN
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    VideoSettingsSubMenu.DIALOGUE_BOOST -> {
+                        val modes = listOf(
+                            Triple(
+                                DialogueBoostMode.OFF,
+                                "Off (Natural Mix)",
+                                "Standard audio response with original sound effects balance"
+                            ),
+                            Triple(
+                                DialogueBoostMode.CLEAR,
+                                "Voice Clarity (+4 dB)",
+                                "+4 dB at 1 kHz & 3 kHz speech formants, -3 dB at 60 Hz mud cut"
+                            ),
+                            Triple(
+                                DialogueBoostMode.MAXIMUM,
+                                "Maximum Dialogue Isolation (+7 dB)",
+                                "+7 dB at 1 kHz & 3 kHz speech formants, -6 dB at 60 Hz rumble cut"
+                            )
+                        )
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0x1AF59E0B),
+                                border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.3f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "Acoustic formant boost isolates speech intelligibility from loud background music scores and explosive sound effects.",
+                                    fontSize = 11.sp,
+                                    color = GobeatsAmber,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                            modes.forEach { (mode, title, desc) ->
+                                SelectableOptionRow(
+                                    title = title,
+                                    subtitle = desc,
+                                    badge = if (mode == DialogueBoostMode.OFF) "NATURAL" else "ISOLATION",
+                                    isSelected = state.dialogueBoostMode == mode,
+                                    onClick = {
+                                        onSelectDialogueBoost(mode)
+                                        currentSubMenu = VideoSettingsSubMenu.MAIN
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    VideoSettingsSubMenu.AV_DELAY -> {
+                        val currentProfile = state.currentAudioDeviceProfile
+                        val deviceName = currentProfile?.name ?: "Connected Device"
+                        val deviceType = currentProfile?.type?.name ?: "AUDIO"
+                        val delayPresets = listOf(
+                            -150L to "-150 ms (Early Audio)",
+                            -50L to "-50 ms (Slight Early)",
+                            0L to "0 ms (Original Native Sync)",
+                            100L to "+100 ms (TWS Earbuds / AirPods)",
+                            180L to "+180 ms (Bluetooth Car Audio)",
+                            250L to "+250 ms (High-latency Wireless)",
+                            350L to "+350 ms (Maximum Delay Compensation)"
+                        )
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0x1AF59E0B),
+                                border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.35f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Active Output: $deviceName [$deviceType]",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = GobeatsAmber
+                                    )
+                                    Text(
+                                        text = "Adjust video presentation clock offset to achieve perfect lip-sync. This offset is permanently remembered and restored whenever this device connects.",
+                                        fontSize = 11.sp,
+                                        color = GobeatsTextMuted
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            delayPresets.forEach { (delayMs, desc) ->
+                                SelectableOptionRow(
+                                    title = desc,
+                                    subtitle = if (delayMs == 0L) "Direct hardware presentation" else "Lip-sync compensated offset",
+                                    badge = if (delayMs == 0L) "DEFAULT" else "${delayMs}ms",
+                                    isSelected = state.avDelayMs == delayMs,
+                                    onClick = {
+                                        onSelectAvDelay(delayMs)
                                         currentSubMenu = VideoSettingsSubMenu.MAIN
                                     }
                                 )

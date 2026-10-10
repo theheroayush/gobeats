@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.example.gobeats.core.model.Album
 import com.example.gobeats.core.model.Artist
+import com.example.gobeats.core.model.DeviceAudioProfile
+import com.example.gobeats.core.model.DeviceAudioProfileType
 import com.example.gobeats.core.model.MusicSource
 import com.example.gobeats.core.model.Playlist
 import com.example.gobeats.core.model.SavedPlaybackState
@@ -27,7 +29,7 @@ class GobeatsDatabaseHelper(context: Context) :
 
     companion object {
         const val DATABASE_NAME = "gobeats.db"
-        const val DATABASE_VERSION = 3
+        const val DATABASE_VERSION = 5
 
         @Volatile
         private var INSTANCE: GobeatsDatabaseHelper? = null
@@ -73,6 +75,65 @@ class GobeatsDatabaseHelper(context: Context) :
                     """.trimIndent()
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS idx_video_positions_updated ON video_playback_positions(updated_at DESC);")
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 4) {
+            try {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS track_playback_stats (
+                        track_id TEXT PRIMARY KEY NOT NULL,
+                        play_count INTEGER NOT NULL DEFAULT 0,
+                        skip_count INTEGER NOT NULL DEFAULT 0,
+                        completed_count INTEGER NOT NULL DEFAULT 0,
+                        last_played_at INTEGER NOT NULL DEFAULT 0,
+                        total_listen_ms INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                    );
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_stats_play_count ON track_playback_stats(play_count DESC);")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_stats_last_played ON track_playback_stats(last_played_at DESC);")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS lyrics_cache (
+                        track_id TEXT PRIMARY KEY NOT NULL,
+                        plain_lyrics TEXT,
+                        synced_lyrics TEXT,
+                        source TEXT NOT NULL DEFAULT 'LRCLIB',
+                        updated_at INTEGER NOT NULL,
+                        FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                    );
+                    """.trimIndent()
+                )
+            } catch (_: Exception) {}
+        }
+        if (oldVersion < 5) {
+            try {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS device_audio_profiles (
+                        device_id TEXT PRIMARY KEY NOT NULL,
+                        device_name TEXT NOT NULL,
+                        device_type TEXT NOT NULL,
+                        preferred_eq_preset TEXT NOT NULL DEFAULT 'Studio Reference',
+                        av_delay_ms INTEGER NOT NULL DEFAULT 0,
+                        updated_at INTEGER NOT NULL
+                    );
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS offline_generated_subtitles (
+                        track_id TEXT NOT NULL,
+                        language_code TEXT NOT NULL,
+                        subtitle_content TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY (track_id, language_code),
+                        FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+                    );
+                    """.trimIndent()
+                )
             } catch (_: Exception) {}
         }
         try {
@@ -269,6 +330,61 @@ class GobeatsDatabaseHelper(context: Context) :
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_video_positions_updated ON video_playback_positions(updated_at DESC);")
 
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS track_playback_stats (
+                track_id TEXT PRIMARY KEY NOT NULL,
+                play_count INTEGER NOT NULL DEFAULT 0,
+                skip_count INTEGER NOT NULL DEFAULT 0,
+                completed_count INTEGER NOT NULL DEFAULT 0,
+                last_played_at INTEGER NOT NULL DEFAULT 0,
+                total_listen_ms INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+            );
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_stats_play_count ON track_playback_stats(play_count DESC);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_stats_last_played ON track_playback_stats(last_played_at DESC);")
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS lyrics_cache (
+                track_id TEXT PRIMARY KEY NOT NULL,
+                plain_lyrics TEXT,
+                synced_lyrics TEXT,
+                source TEXT NOT NULL DEFAULT 'LRCLIB',
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+            );
+            """.trimIndent()
+        )
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS device_audio_profiles (
+                device_id TEXT PRIMARY KEY NOT NULL,
+                device_name TEXT NOT NULL,
+                device_type TEXT NOT NULL,
+                preferred_eq_preset TEXT NOT NULL DEFAULT 'Studio Reference',
+                av_delay_ms INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
+            """.trimIndent()
+        )
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS offline_generated_subtitles (
+                track_id TEXT NOT NULL,
+                language_code TEXT NOT NULL,
+                subtitle_content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (track_id, language_code),
+                FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+            );
+            """.trimIndent()
+        )
+
         // Seed default local, external, and internet music sources
         val now = System.currentTimeMillis()
         listOf(
@@ -294,99 +410,116 @@ class GobeatsDatabaseHelper(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            // Ensure music_source exists so foreign key constraint never fails on external/stream tracks
-            val effectiveSourceId = track.sourceId.ifBlank { "source_local" }
-            val sourceValues = ContentValues().apply {
-                put("id", effectiveSourceId)
-                put("type", if (effectiveSourceId == "source_internet") SourceType.STREAMING_SERVICE.name else SourceType.LOCAL_STORAGE.name)
-                put("name", when (effectiveSourceId) {
-                    "source_external" -> "External Files"
-                    "source_internet" -> "Internet Stream"
-                    else -> "This Phone"
-                })
-                put("created_at", System.currentTimeMillis())
-            }
-            db.insertWithOnConflict("music_sources", null, sourceValues, SQLiteDatabase.CONFLICT_IGNORE)
-
-            // Check for persistent user overrides
-            var finalTitle = track.title
-            var finalArtist = track.artistName
-            var finalAlbum = track.albumTitle
-            var finalGenre = track.genre
-            var finalYear = track.year
-            var finalArtworkUri = track.artworkUri
-
-            try {
-                db.rawQuery("SELECT title, artist, album, genre, year, artwork_uri FROM track_metadata_overrides WHERE track_id = ?", arrayOf(track.id)).use { c ->
-                    if (c.moveToFirst()) {
-                        val oTitle = c.getString(0)
-                        val oArtist = c.getString(1)
-                        val oAlbum = c.getString(2)
-                        val oGenre = c.getString(3)
-                        val oYear = if (c.isNull(4)) null else c.getInt(4)
-                        val oArt = c.getString(5)
-                        if (!oTitle.isNullOrBlank()) finalTitle = oTitle
-                        if (!oArtist.isNullOrBlank()) finalArtist = oArtist
-                        if (!oAlbum.isNullOrBlank()) finalAlbum = oAlbum
-                        if (!oGenre.isNullOrBlank()) finalGenre = oGenre
-                        if (oYear != null) finalYear = oYear
-                        if (!oArt.isNullOrBlank()) finalArtworkUri = oArt
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // Ensure artist exists
-            val artistId = track.artistId ?: ("art_" + finalArtist.hashCode().toString())
-            val artistValues = ContentValues().apply {
-                put("id", artistId)
-                put("name", finalArtist)
-                put("created_at", System.currentTimeMillis())
-            }
-            db.insertWithOnConflict("artists", null, artistValues, SQLiteDatabase.CONFLICT_IGNORE)
-
-            // Ensure album exists
-            val albumId = track.albumId ?: ("alb_" + (finalAlbum + finalArtist).hashCode().toString())
-            val albumValues = ContentValues().apply {
-                put("id", albumId)
-                put("title", finalAlbum)
-                put("artist_id", artistId)
-                put("artist_name", finalArtist)
-                put("artwork_uri", finalArtworkUri)
-                put("created_at", System.currentTimeMillis())
-            }
-            db.insertWithOnConflict("albums", null, albumValues, SQLiteDatabase.CONFLICT_IGNORE)
-
-            val trackValues = ContentValues().apply {
-                put("id", track.id)
-                put("source_id", effectiveSourceId)
-                put("file_uri", track.fileUri)
-                put("title", finalTitle)
-                put("artist_name", finalArtist)
-                put("album_title", finalAlbum)
-                put("duration_ms", track.durationMs)
-                put("artist_id", artistId)
-                put("album_id", albumId)
-                put("track_number", track.trackNumber)
-                put("disc_number", track.discNumber)
-                put("genre", finalGenre)
-                put("year", finalYear)
-                put("format", track.format)
-                put("bitrate", track.bitrate)
-                put("sample_rate", track.sampleRate)
-                put("file_size", track.fileSize)
-                put("artwork_uri", finalArtworkUri)
-                put("is_available", if (track.isAvailable) 1 else 0)
-                put("date_added", track.dateAdded)
-                put("is_video", if (track.isVideo) 1 else 0)
-                put("video_width", track.videoWidth)
-                put("video_height", track.videoHeight)
-            }
-            db.insertWithOnConflict("tracks", null, trackValues, SQLiteDatabase.CONFLICT_REPLACE)
-
+            insertTrackInternal(db, track)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
             notifyDataChanged()
+        }
+    }
+
+    private fun insertTrackInternal(db: SQLiteDatabase, track: Track) {
+        val effectiveSourceId = track.sourceId.ifBlank { "source_local" }
+        val sourceValues = ContentValues().apply {
+            put("id", effectiveSourceId)
+            put("type", if (effectiveSourceId == "source_internet") SourceType.STREAMING_SERVICE.name else SourceType.LOCAL_STORAGE.name)
+            put("name", when (effectiveSourceId) {
+                "source_external" -> "External Files"
+                "source_internet" -> "Internet Stream"
+                else -> "This Phone"
+            })
+            put("created_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("music_sources", null, sourceValues, SQLiteDatabase.CONFLICT_IGNORE)
+
+        // Check for persistent user overrides
+        var finalTitle = track.title
+        var finalArtist = track.artistName
+        var finalAlbum = track.albumTitle
+        var finalGenre = track.genre
+        var finalYear = track.year
+        var finalArtworkUri = track.artworkUri
+
+        try {
+            db.rawQuery("SELECT title, artist, album, genre, year, artwork_uri FROM track_metadata_overrides WHERE track_id = ?", arrayOf(track.id)).use { c ->
+                if (c.moveToFirst()) {
+                    val oTitle = c.getString(0)
+                    val oArtist = c.getString(1)
+                    val oAlbum = c.getString(2)
+                    val oGenre = c.getString(3)
+                    val oYear = if (c.isNull(4)) null else c.getInt(4)
+                    val oArt = c.getString(5)
+                    if (!oTitle.isNullOrBlank()) finalTitle = oTitle
+                    if (!oArtist.isNullOrBlank()) finalArtist = oArtist
+                    if (!oAlbum.isNullOrBlank()) finalAlbum = oAlbum
+                    if (!oGenre.isNullOrBlank()) finalGenre = oGenre
+                    if (oYear != null) finalYear = oYear
+                    if (!oArt.isNullOrBlank()) finalArtworkUri = oArt
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Ensure artist exists
+        val artistId = track.artistId ?: ("art_" + finalArtist.hashCode().toString())
+        val artistValues = ContentValues().apply {
+            put("id", artistId)
+            put("name", finalArtist)
+            put("created_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("artists", null, artistValues, SQLiteDatabase.CONFLICT_IGNORE)
+
+        // Ensure album exists
+        val albumId = track.albumId ?: ("alb_" + (finalAlbum + finalArtist).hashCode().toString())
+        val albumValues = ContentValues().apply {
+            put("id", albumId)
+            put("title", finalAlbum)
+            put("artist_id", artistId)
+            put("artist_name", finalArtist)
+            put("artwork_uri", finalArtworkUri)
+            put("created_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("albums", null, albumValues, SQLiteDatabase.CONFLICT_IGNORE)
+
+        val trackValues = ContentValues().apply {
+            put("id", track.id)
+            put("source_id", effectiveSourceId)
+            put("file_uri", track.fileUri)
+            put("title", finalTitle)
+            put("artist_name", finalArtist)
+            put("album_title", finalAlbum)
+            put("duration_ms", track.durationMs)
+            put("artist_id", artistId)
+            put("album_id", albumId)
+            put("track_number", track.trackNumber)
+            put("disc_number", track.discNumber)
+            put("genre", finalGenre)
+            put("year", finalYear)
+            put("format", track.format)
+            put("bitrate", track.bitrate)
+            put("sample_rate", track.sampleRate)
+            put("file_size", track.fileSize)
+            put("artwork_uri", finalArtworkUri)
+            put("is_available", if (track.isAvailable) 1 else 0)
+            put("date_added", track.dateAdded)
+            put("is_video", if (track.isVideo) 1 else 0)
+            put("video_width", track.videoWidth)
+            put("video_height", track.videoHeight)
+        }
+        db.insertWithOnConflict("tracks", null, trackValues, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    suspend fun insertTracksBatch(tracks: List<Track>, notify: Boolean = true) = withContext(Dispatchers.IO) {
+        if (tracks.isEmpty()) return@withContext
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (track in tracks) {
+                insertTrackInternal(db, track)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+            if (notify) notifyDataChanged()
         }
     }
 
@@ -712,6 +845,18 @@ class GobeatsDatabaseHelper(context: Context) :
         if (playlistId == "pl_favorites" || playlistId == "pl_liked") {
             return@withContext getFavoriteTracks()
         }
+        if (playlistId == "pl_most_played") {
+            return@withContext getMostPlayedTracks(50)
+        }
+        if (playlistId == "pl_recently_played") {
+            return@withContext getRecentlyPlayedTracks(50)
+        }
+        if (playlistId == "pl_heavy_rotation") {
+            return@withContext getHeavyRotationTracks(50)
+        }
+        if (playlistId == "pl_forgotten_favorites") {
+            return@withContext getForgottenFavorites(50)
+        }
         val list = mutableListOf<Track>()
         val db = readableDatabase
         val query = """
@@ -766,12 +911,226 @@ class GobeatsDatabaseHelper(context: Context) :
 
     suspend fun recordTrackPlayed(trackId: String) = withContext(Dispatchers.IO) {
         val db = writableDatabase
+        val now = System.currentTimeMillis()
         val values = ContentValues().apply {
             put("track_id", trackId)
-            put("started_at", System.currentTimeMillis())
+            put("started_at", now)
         }
         db.insert("playback_history", null, values)
+        try {
+            val sql = """
+                INSERT INTO track_playback_stats (track_id, play_count, skip_count, completed_count, last_played_at, total_listen_ms)
+                VALUES (?, 1, 0, 0, ?, 0)
+                ON CONFLICT(track_id) DO UPDATE SET
+                    play_count = play_count + 1,
+                    last_played_at = ?;
+            """.trimIndent()
+            db.execSQL(sql, arrayOf<Any>(trackId, now, now))
+        } catch (_: Exception) {}
         notifyDataChanged()
+    }
+
+    suspend fun recordPlaybackTelemetry(
+        trackId: String,
+        listenDurationMs: Long,
+        isCompleted: Boolean,
+        isSkipped: Boolean
+    ): Unit = withContext(Dispatchers.IO) {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        val playIncrement = if (listenDurationMs >= 30_000L || isCompleted) 1 else 0
+        val skipIncrement = if (isSkipped) 1 else 0
+        val completedIncrement = if (isCompleted) 1 else 0
+
+        val sql = """
+            INSERT INTO track_playback_stats (track_id, play_count, skip_count, completed_count, last_played_at, total_listen_ms)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(track_id) DO UPDATE SET
+                play_count = play_count + ?,
+                skip_count = skip_count + ?,
+                completed_count = completed_count + ?,
+                last_played_at = ?,
+                total_listen_ms = total_listen_ms + ?;
+        """.trimIndent()
+
+        try {
+            db.execSQL(
+                sql,
+                arrayOf<Any>(
+                    trackId,
+                    playIncrement,
+                    skipIncrement,
+                    completedIncrement,
+                    now,
+                    listenDurationMs,
+                    playIncrement,
+                    skipIncrement,
+                    completedIncrement,
+                    now,
+                    listenDurationMs
+                )
+            )
+        } catch (_: Exception) {}
+        notifyDataChanged()
+    }
+
+    suspend fun getMostPlayedTracks(limit: Int = 30): List<Track> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Track>()
+        val db = readableDatabase
+        val query = """
+            SELECT t.*, CASE WHEN f.track_id IS NOT NULL THEN 1 ELSE 0 END AS is_fav
+            FROM track_playback_stats s
+            INNER JOIN tracks t ON s.track_id = t.id
+            LEFT JOIN favorites f ON t.id = f.track_id
+            WHERE t.is_available = 1 AND s.play_count > 0
+            ORDER BY s.play_count DESC, s.last_played_at DESC
+            LIMIT ?
+        """.trimIndent()
+        db.rawQuery(query, arrayOf(limit.toString())).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(cursorToTrack(cursor))
+            }
+        }
+        list
+    }
+
+    suspend fun getHeavyRotationTracks(limit: Int = 30): List<Track> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Track>()
+        val db = readableDatabase
+        val fourteenDaysAgo = System.currentTimeMillis() - (14L * 24 * 60 * 60 * 1000)
+        val query = """
+            SELECT t.*, CASE WHEN f.track_id IS NOT NULL THEN 1 ELSE 0 END AS is_fav
+            FROM track_playback_stats s
+            INNER JOIN tracks t ON s.track_id = t.id
+            LEFT JOIN favorites f ON t.id = f.track_id
+            WHERE t.is_available = 1 AND s.play_count > 0 AND s.last_played_at >= ?
+            ORDER BY s.play_count DESC, s.last_played_at DESC
+            LIMIT ?
+        """.trimIndent()
+        db.rawQuery(query, arrayOf(fourteenDaysAgo.toString(), limit.toString())).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(cursorToTrack(cursor))
+            }
+        }
+        if (list.size < 5) {
+            val most = getMostPlayedTracks(limit)
+            val existingIds = list.map { it.id }.toSet()
+            list.addAll(most.filter { it.id !in existingIds })
+        }
+        list.take(limit)
+    }
+
+    suspend fun getForgottenFavorites(limit: Int = 30): List<Track> = withContext(Dispatchers.IO) {
+        val list = mutableListOf<Track>()
+        val db = readableDatabase
+        val twentyOneDaysAgo = System.currentTimeMillis() - (21L * 24 * 60 * 60 * 1000)
+        val query = """
+            SELECT t.*, CASE WHEN f.track_id IS NOT NULL THEN 1 ELSE 0 END AS is_fav
+            FROM tracks t
+            LEFT JOIN favorites f ON t.id = f.track_id
+            LEFT JOIN track_playback_stats s ON t.id = s.track_id
+            WHERE t.is_available = 1
+              AND (f.track_id IS NOT NULL OR (s.play_count IS NOT NULL AND s.play_count >= 2))
+              AND (s.last_played_at IS NULL OR s.last_played_at < ?)
+            ORDER BY COALESCE(s.play_count, 1) DESC, t.date_added DESC
+            LIMIT ?
+        """.trimIndent()
+        db.rawQuery(query, arrayOf(twentyOneDaysAgo.toString(), limit.toString())).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(cursorToTrack(cursor))
+            }
+        }
+        list
+    }
+
+    suspend fun saveCachedLyrics(
+        trackId: String,
+        plainLyrics: String?,
+        syncedLyrics: String?,
+        source: String = "LRCLIB"
+    ): Unit = withContext(Dispatchers.IO) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put("track_id", trackId)
+            put("plain_lyrics", plainLyrics)
+            put("synced_lyrics", syncedLyrics)
+            put("source", source)
+            put("updated_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("lyrics_cache", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    suspend fun getCachedLyrics(trackId: String): CachedLyrics? = withContext(Dispatchers.IO) {
+        val db = readableDatabase
+        val query = "SELECT track_id, plain_lyrics, synced_lyrics, source, updated_at FROM lyrics_cache WHERE track_id = ? LIMIT 1"
+        db.rawQuery(query, arrayOf(trackId)).use { cursor ->
+            if (cursor.moveToFirst()) {
+                CachedLyrics(
+                    trackId = cursor.getString(0),
+                    plainLyrics = if (cursor.isNull(1)) null else cursor.getString(1),
+                    syncedLyrics = if (cursor.isNull(2)) null else cursor.getString(2),
+                    source = cursor.getString(3) ?: "LRCLIB",
+                    updatedAt = cursor.getLong(4)
+                )
+            } else null
+        }
+    }
+
+    suspend fun getSmartPlaylists(): List<Playlist> = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val mostPlayed = getMostPlayedTracks(50)
+        val recentlyPlayed = getRecentlyPlayedTracks(50)
+        val heavyRotation = getHeavyRotationTracks(50)
+        val forgotten = getForgottenFavorites(50)
+        val favs = getFavoriteTracks()
+
+        listOf(
+            Playlist(
+                id = "pl_liked",
+                name = "Liked Songs",
+                description = "Your favorite tracks",
+                isSmart = true,
+                trackCount = favs.size,
+                createdAt = now,
+                updatedAt = now
+            ),
+            Playlist(
+                id = "pl_most_played",
+                name = "Most Played",
+                description = "Your all-time on-repeat anthems",
+                isSmart = true,
+                trackCount = mostPlayed.size,
+                createdAt = now,
+                updatedAt = now
+            ),
+            Playlist(
+                id = "pl_heavy_rotation",
+                name = "Heavy Rotation",
+                description = "Tracks you cannot stop playing lately",
+                isSmart = true,
+                trackCount = heavyRotation.size,
+                createdAt = now,
+                updatedAt = now
+            ),
+            Playlist(
+                id = "pl_recently_played",
+                name = "Recently Played",
+                description = "Your chronological playback stream",
+                isSmart = true,
+                trackCount = recentlyPlayed.size,
+                createdAt = now,
+                updatedAt = now
+            ),
+            Playlist(
+                id = "pl_forgotten_favorites",
+                name = "Forgotten Favorites",
+                description = "Tracks you loved that deserve a replay",
+                isSmart = true,
+                trackCount = forgotten.size,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
     }
 
     suspend fun getRecentlyPlayedTracks(limit: Int = 10): List<Track> = withContext(Dispatchers.IO) {
@@ -1049,6 +1408,128 @@ class GobeatsDatabaseHelper(context: Context) :
         }
         list
     }
+
+    // ==========================================
+    // DEVICE AUDIO PROFILES & SUBTITLES (v5)
+    // ==========================================
+
+    suspend fun saveDeviceAudioProfile(profile: DeviceAudioProfile) = withContext(Dispatchers.IO) {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("device_id", profile.deviceId)
+            put("device_name", profile.name)
+            put("device_type", profile.type.name)
+            put("preferred_eq_preset", profile.preferredEqPreset)
+            put("av_delay_ms", profile.avDelayMs)
+            put("updated_at", profile.updatedAt)
+        }
+        db.insertWithOnConflict("device_audio_profiles", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    suspend fun getDeviceAudioProfile(deviceId: String): DeviceAudioProfile? = withContext(Dispatchers.IO) {
+        val db = readableDatabase
+        val cursor = db.query(
+            "device_audio_profiles",
+            null,
+            "device_id = ?",
+            arrayOf(deviceId),
+            null,
+            null,
+            null
+        )
+        cursor.use { c ->
+            if (c.moveToFirst()) {
+                val dId = c.getString(c.getColumnIndexOrThrow("device_id"))
+                val name = c.getString(c.getColumnIndexOrThrow("device_name"))
+                val typeStr = c.getString(c.getColumnIndexOrThrow("device_type"))
+                val type = try {
+                    DeviceAudioProfileType.valueOf(typeStr)
+                } catch (_: Exception) {
+                    DeviceAudioProfileType.SPEAKER
+                }
+                val preset = c.getString(c.getColumnIndexOrThrow("preferred_eq_preset"))
+                val avDelay = c.getLong(c.getColumnIndexOrThrow("av_delay_ms"))
+                val updated = c.getLong(c.getColumnIndexOrThrow("updated_at"))
+                DeviceAudioProfile(
+                    deviceId = dId,
+                    name = name,
+                    type = type,
+                    preferredEqPreset = preset,
+                    avDelayMs = avDelay,
+                    updatedAt = updated
+                )
+            } else null
+        }
+    }
+
+    suspend fun getAllDeviceAudioProfiles(): List<DeviceAudioProfile> = withContext(Dispatchers.IO) {
+        val db = readableDatabase
+        val list = mutableListOf<DeviceAudioProfile>()
+        val cursor = db.query(
+            "device_audio_profiles",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "updated_at DESC"
+        )
+        cursor.use { c ->
+            while (c.moveToNext()) {
+                val dId = c.getString(c.getColumnIndexOrThrow("device_id"))
+                val name = c.getString(c.getColumnIndexOrThrow("device_name"))
+                val typeStr = c.getString(c.getColumnIndexOrThrow("device_type"))
+                val type = try {
+                    DeviceAudioProfileType.valueOf(typeStr)
+                } catch (_: Exception) {
+                    DeviceAudioProfileType.SPEAKER
+                }
+                val preset = c.getString(c.getColumnIndexOrThrow("preferred_eq_preset"))
+                val avDelay = c.getLong(c.getColumnIndexOrThrow("av_delay_ms"))
+                val updated = c.getLong(c.getColumnIndexOrThrow("updated_at"))
+                list.add(
+                    DeviceAudioProfile(
+                        deviceId = dId,
+                        name = name,
+                        type = type,
+                        preferredEqPreset = preset,
+                        avDelayMs = avDelay,
+                        updatedAt = updated
+                    )
+                )
+            }
+        }
+        list
+    }
+
+    suspend fun saveGeneratedSubtitle(trackId: String, lang: String, srtContent: String) = withContext(Dispatchers.IO) {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("track_id", trackId)
+            put("language_code", lang)
+            put("subtitle_content", srtContent)
+            put("created_at", System.currentTimeMillis())
+        }
+        db.insertWithOnConflict("offline_generated_subtitles", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    suspend fun getGeneratedSubtitle(trackId: String, lang: String): String? = withContext(Dispatchers.IO) {
+        val db = readableDatabase
+        val cursor = db.query(
+            "offline_generated_subtitles",
+            arrayOf("subtitle_content"),
+            "track_id = ? AND language_code = ?",
+            arrayOf(trackId, lang),
+            null,
+            null,
+            null
+        )
+        cursor.use { c ->
+            if (c.moveToFirst()) {
+                c.getString(c.getColumnIndexOrThrow("subtitle_content"))
+            } else null
+        }
+    }
 }
 
 data class VideoPlaybackPosition(
@@ -1057,4 +1538,13 @@ data class VideoPlaybackPosition(
     val durationMs: Long,
     val updatedAt: Long
 )
+
+data class CachedLyrics(
+    val trackId: String,
+    val plainLyrics: String?,
+    val syncedLyrics: String?,
+    val source: String,
+    val updatedAt: Long
+)
+
 

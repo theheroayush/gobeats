@@ -95,6 +95,14 @@ class GobeatsMediaSessionService : MediaSessionService() {
         activePlayer = player
         (application as? com.example.gobeats.GobeatsApplication)?.equalizerManager?.bindAudioSession(player.audioSessionId)
 
+        player.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (audioSessionId > 0) {
+                    (application as? com.example.gobeats.GobeatsApplication)?.equalizerManager?.bindAudioSession(audioSessionId)
+                }
+            }
+        })
+
         val sessionActivityPendingIntent = PendingIntent.getActivity(
             this,
             0,
