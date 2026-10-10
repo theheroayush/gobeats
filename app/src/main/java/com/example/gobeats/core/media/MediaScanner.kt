@@ -48,10 +48,14 @@ class MediaScanner(
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.YEAR,
-            MediaStore.Audio.Media.IS_MUSIC
+            MediaStore.Audio.Media.IS_MUSIC,
+            MediaStore.Audio.Media.IS_RINGTONE,
+            MediaStore.Audio.Media.IS_NOTIFICATION,
+            MediaStore.Audio.Media.IS_ALARM
         )
 
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        // Include both standard music and internet-downloaded audio files (where IS_MUSIC may be 0), excluding only system ringtones/alarms/notifications
+        val selection = "${MediaStore.Audio.Media.IS_RINGTONE} = 0 AND ${MediaStore.Audio.Media.IS_NOTIFICATION} = 0 AND ${MediaStore.Audio.Media.IS_ALARM} = 0"
 
         try {
             context.contentResolver.query(
@@ -82,8 +86,8 @@ class MediaScanner(
                     val msAlbumId = if (albumIdCol >= 0) cursor.getLong(albumIdCol) else null
                     val msYear = if (yearCol >= 0) cursor.getInt(yearCol) else null
 
-                    // Noise Filter: Skip audio files shorter than 30s (WhatsApp voice notes, ringtones, UI pings)
-                    if (msDuration != null && msDuration < 30_000L) {
+                    // Noise Filter: Skip tiny UI pings (1ms to 5s), but allow 0L (internet-downloaded files with unindexed duration headers)
+                    if (msDuration != null && msDuration in 1L until 5_000L) {
                         continue
                     }
 
@@ -109,7 +113,7 @@ class MediaScanner(
                 }
             }
 
-            // Also query Video MediaStore to index music videos, concert clips, and MP4 files
+            // Also query Video MediaStore to index music videos, concert clips, and MP4/MKV/WEBM/MOV/AVI files
             val videoCollection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
             } else {
@@ -143,8 +147,8 @@ class MediaScanner(
 
                 while (vCursor.moveToNext()) {
                     val vDuration = if (vDurationCol >= 0) vCursor.getLong(vDurationCol) else 0L
-                    // Skip tiny micro clips (1s to 3s), but allow 0L (unindexed videos)
-                    if (vDuration in 1L until 3_000L) continue
+                    // Skip tiny micro clips (1ms to 2s), but allow 0L (unindexed videos)
+                    if (vDuration in 1L until 2_000L) continue
 
                     val id = vCursor.getLong(vIdCol)
                     val name = vCursor.getString(vNameCol) ?: "Video"
@@ -174,6 +178,65 @@ class MediaScanner(
                 }
             }
 
+            // Scan Downloads, Music, and App Sync folders for unindexed internet downloads (.opus, .webm, .m4a, .mp4) & .m3u/.m3u8 playlists
+            val extraDirs = listOfNotNull(
+                context.getExternalFilesDir(null),
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC)
+            )
+            val playlistFiles = mutableListOf<File>()
+            for (dir in extraDirs) {
+                if (dir.exists() && dir.canRead()) {
+                    val files = dir.listFiles().orEmpty()
+                    for (file in files) {
+                        if (file.isFile && file.canRead()) {
+                            val lower = file.name.lowercase()
+                            if (lower.endsWith(".m3u") || lower.endsWith(".m3u8")) {
+                                playlistFiles.add(file)
+                            } else if (isSupportedMediaFile(file.name, null) && file.length() > 8_192L) {
+                                val fileUri = Uri.fromFile(file)
+                                val isVid = MetadataExtractor.isVideoExtensionOrMime(file.name, null, fileUri.toString())
+                                val track = MetadataExtractor.extractMetadata(
+                                    context = context,
+                                    uri = fileUri,
+                                    sourceId = "source_local",
+                                    fileSize = file.length(),
+                                    displayName = file.name,
+                                    hintIsVideo = isVid
+                                )
+                                dbHelper.insertOrUpdateTrack(track)
+                                count++
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-sync any .m3u / .m3u8 playlists discovered in Downloads or Music
+            if (playlistFiles.isNotEmpty()) {
+                val allLibrary = dbHelper.getAllTracks()
+                val existingPlaylists = dbHelper.getAllPlaylists()
+                for (plFile in playlistFiles) {
+                    try {
+                        val content = plFile.readText()
+                        val defaultName = plFile.nameWithoutExtension.replace('_', ' ').ifBlank { "Synced Playlist" }
+                        val (parsedName, entries) = com.example.gobeats.core.playlist.PlaylistImporter.parseText(content, defaultName)
+                        val matchRes = com.example.gobeats.core.playlist.PlaylistImporter.matchTracks(entries, allLibrary, parsedName)
+                        val tracksToSync = matchRes.matchedTracks + matchRes.streamTracks
+                        if (tracksToSync.isNotEmpty()) {
+                            for (st in matchRes.streamTracks) {
+                                dbHelper.insertOrUpdateTrack(st)
+                            }
+                            val targetPl = existingPlaylists.find { it.name.equals(parsedName, ignoreCase = true) }
+                                ?: dbHelper.createPlaylist(parsedName, "[Imported] Synced from ${plFile.name}")
+                            for (t in tracksToSync) {
+                                dbHelper.addTrackToPlaylist(targetPl.id, t.id)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
             emit(ScanProgress(scannedCount = count, currentFile = "Completed", isComplete = true))
         } catch (e: Exception) {
             emit(ScanProgress(scannedCount = count, currentFile = "", isComplete = true, errorMessage = e.localizedMessage))
@@ -191,10 +254,7 @@ class MediaScanner(
 
             for (doc in mediaFiles) {
                 val name = doc.name ?: "Track"
-                val isVid = doc.type?.startsWith("video/") == true ||
-                        name.endsWith(".mp4", ignoreCase = true) ||
-                        name.endsWith(".mkv", ignoreCase = true) ||
-                        name.endsWith(".webm", ignoreCase = true)
+                val isVid = MetadataExtractor.isVideoExtensionOrMime(name, doc.type, doc.uri.toString())
                 emit(ScanProgress(scannedCount = count, currentFile = name, isComplete = false))
 
                 val track = MetadataExtractor.extractMetadata(
@@ -230,9 +290,11 @@ class MediaScanner(
         val lower = name.lowercase()
         return lower.endsWith(".mp3") || lower.endsWith(".flac") ||
                 lower.endsWith(".wav") || lower.endsWith(".m4a") ||
-                lower.endsWith(".ogg") || lower.endsWith(".opus") ||
-                lower.endsWith(".mp4") || lower.endsWith(".mkv") ||
-                lower.endsWith(".webm")
+                lower.endsWith(".aac") || lower.endsWith(".ogg") ||
+                lower.endsWith(".opus") || lower.endsWith(".mp4") ||
+                lower.endsWith(".mkv") || lower.endsWith(".webm") ||
+                lower.endsWith(".mov") || lower.endsWith(".avi") ||
+                lower.endsWith(".3gp") || lower.endsWith(".m4v")
     }
 
     /**

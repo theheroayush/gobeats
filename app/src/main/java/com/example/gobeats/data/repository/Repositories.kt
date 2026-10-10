@@ -16,6 +16,7 @@ import android.content.Context
 import android.net.Uri
 import com.example.gobeats.core.media.Id3TagWriter
 import com.example.gobeats.core.media.TagEditPayload
+import com.example.gobeats.core.media.UniversalTagWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -47,6 +48,8 @@ class LibraryRepository(
 
     suspend fun getAllArtists(): List<Artist> = dbHelper.getAllArtists()
 
+    suspend fun getAllPlaylists(): List<Playlist> = dbHelper.getAllPlaylists()
+
     suspend fun getRecentlyPlayedTracks(limit: Int = 10): List<Track> =
         dbHelper.getRecentlyPlayedTracks(limit)
 
@@ -59,61 +62,31 @@ class LibraryRepository(
     suspend fun insertOrUpdateTrack(track: Track) = dbHelper.insertOrUpdateTrack(track)
 
     suspend fun updateTrackMetadata(payload: TagEditPayload): Track? = withContext(Dispatchers.IO) {
-        var finalPayload = payload
-        context?.let { ctx ->
-            if (payload.newArtworkBytes != null) {
+        val ctx = context
+        val track = if (ctx != null) dbHelper.getTrackById(payload.trackId) else null
+
+        if (ctx != null && track != null) {
+            UniversalTagWriter.writeTags(
+                context = ctx,
+                track = track,
+                payload = payload,
+                dbHelper = dbHelper,
+                playbackConnection = playbackConnection
+            )
+        } else {
+            var finalPayload = payload
+            if (ctx != null && payload.newArtworkBytes != null) {
                 val savedUri = Id3TagWriter.saveArtworkToStorage(ctx, payload.newArtworkBytes, payload.trackId)
                 if (savedUri != null) {
                     finalPayload = finalPayload.copy(artworkUri = savedUri)
                 }
             }
-
-            val track = dbHelper.getTrackById(payload.trackId)
-            if (track != null) {
-                val isMp3 = track.fileUri.endsWith(".mp3", ignoreCase = true) || track.format.contains("mp3", ignoreCase = true)
-                if (isMp3) {
-                    val filePath = if (track.fileUri.startsWith("file://")) {
-                        Uri.parse(track.fileUri).path
-                    } else if (track.fileUri.startsWith("/")) {
-                        track.fileUri
-                    } else {
-                        null
-                    }
-                    if (filePath != null) {
-                        val file = File(filePath)
-                        if (file.exists() && file.canWrite()) {
-                            val id3Bytes = Id3TagWriter.buildId3v23Tag(
-                                title = finalPayload.title,
-                                artist = finalPayload.artist,
-                                album = finalPayload.album,
-                                year = finalPayload.year,
-                                genre = finalPayload.genre,
-                                trackNumber = finalPayload.trackNumber,
-                                artworkBytes = finalPayload.newArtworkBytes
-                            )
-                            Id3TagWriter.writeTagsToMp3File(file, id3Bytes)
-                        }
-                    }
-                }
-
-                if (track.fileUri.startsWith("content://")) {
-                    Id3TagWriter.updateMediaStoreTags(
-                        context = ctx,
-                        contentUri = Uri.parse(track.fileUri),
-                        title = finalPayload.title,
-                        artist = finalPayload.artist,
-                        album = finalPayload.album,
-                        year = finalPayload.year
-                    )
-                }
+            val updated = dbHelper.updateTrackMetadata(finalPayload)
+            if (updated != null) {
+                playbackConnection?.notifyTrackMetadataChanged(updated)
             }
+            updated
         }
-
-        val updated = dbHelper.updateTrackMetadata(finalPayload)
-        if (updated != null) {
-            playbackConnection?.notifyTrackMetadataChanged(updated)
-        }
-        updated
     }
 }
 
@@ -133,6 +106,14 @@ class PlaylistRepository(
 
     suspend fun seedDefaultPlaylistsIfEmpty() =
         dbHelper.seedDefaultPlaylistsIfEmpty()
+
+    suspend fun insertOrUpdateTrack(track: Track) =
+        dbHelper.insertOrUpdateTrack(track)
+
+    suspend fun addTrack(playlistId: String, track: Track) {
+        dbHelper.insertOrUpdateTrack(track)
+        dbHelper.addTrackToPlaylist(playlistId, track.id)
+    }
 
     suspend fun addTrackToPlaylist(playlistId: String, trackId: String) =
         dbHelper.addTrackToPlaylist(playlistId, trackId)
@@ -166,6 +147,22 @@ class PlaybackRepository(
 
     fun selectVideoQuality(optionId: String) {
         playbackConnection.selectVideoQuality(optionId)
+    }
+
+    fun setVideoLoudnessBoost(percent: Int) {
+        playbackConnection.setVideoLoudnessBoost(percent)
+    }
+
+    fun addExternalSubtitle(uri: Uri, customLabel: String? = null) {
+        playbackConnection.addExternalSubtitle(uri, customLabel)
+    }
+
+    fun resumeFromSavedPosition() {
+        playbackConnection.resumeFromSavedPosition()
+    }
+
+    fun dismissResumePrompt() {
+        playbackConnection.dismissResumePrompt()
     }
 
     fun start2xSpeedPreview() {
@@ -254,6 +251,18 @@ class PlaybackRepository(
 
     fun setVolume(volume: Float) {
         playbackConnection.setVolume(volume)
+    }
+
+    fun setCrossfadeDuration(seconds: Int) {
+        playbackConnection.setCrossfadeDuration(seconds)
+    }
+
+    fun setGaplessPlayback(enabled: Boolean) {
+        playbackConnection.setGaplessPlayback(enabled)
+    }
+
+    fun persistPlaybackState() {
+        playbackConnection.persistCurrentPlaybackState()
     }
 }
 

@@ -21,6 +21,8 @@ data class LyricsData(
     }
 }
 
+typealias SyncedLyrics = LyricsData
+
 object LrcParser {
     private val TIMESTAMP_REGEX = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]""")
     private val HEADER_TAG_REGEX = Regex("""^\[[a-zA-Z]+:.*\]$""")

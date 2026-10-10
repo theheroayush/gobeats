@@ -164,6 +164,9 @@ fun SyncedLyricsView(
                             Text(
                                 text = when {
                                     lyricsData?.source == "lrclib" && lyricsData?.isSynced == true -> "LRCLIB • SYNCED"
+                                    lyricsData?.source == "companion" && lyricsData?.isSynced == true -> "LOCAL LRC • SYNCED"
+                                    lyricsData?.source == "embedded" && lyricsData?.isSynced == true -> "EMBEDDED • SYNCED"
+                                    lyricsData?.source == "embedded" -> "EMBEDDED"
                                     lyricsData?.isSynced == true -> "SYNCED"
                                     else -> "PLAIN"
                                 },

@@ -90,6 +90,7 @@ fun VideoGestureOverlay(
     isTouchLocked: Boolean = false,
     isFullscreenCinema: Boolean = false,
     is2xSpeedActive: Boolean = false,
+    videoLoudnessBoostPercent: Int = 100,
     onSeek: (Long) -> Unit,
     onDoubleTapLeft: () -> Unit,
     onDoubleTapRight: () -> Unit,
@@ -101,6 +102,7 @@ fun VideoGestureOverlay(
     onSwipeUpFullscreen: () -> Unit = {},
     onSwipeDownExitFullscreen: () -> Unit = {},
     onUnlockTouch: () -> Unit = {},
+    onVideoLoudnessBoostChange: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -133,14 +135,19 @@ fun VideoGestureOverlay(
     val rippleScale = remember { Animatable(0f) }
 
     // Initialize brightness and volume on load
-    LaunchedEffect(activity) {
+    LaunchedEffect(activity, videoLoudnessBoostPercent) {
         activity?.window?.attributes?.let { attrs ->
             brightnessLevel = if (attrs.screenBrightness >= 0f) attrs.screenBrightness else 0.5f
         }
         audioManager?.let { am ->
             val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
             val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-            volumeLevel = (cur / max.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            val baseVol = (cur / max.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            volumeLevel = if (videoLoudnessBoostPercent > 100) {
+                (videoLoudnessBoostPercent / 100f).coerceIn(1f, 2f)
+            } else {
+                baseVol
+            }
         }
     }
 
@@ -309,10 +316,25 @@ fun VideoGestureOverlay(
                                 showVolumeHud = true
                                 audioManager?.let { am ->
                                     val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                    val newVol = (volumeLevel + dragDelta).coerceIn(0f, 1f)
+                                    val oldVol = volumeLevel
+                                    val newVol = (volumeLevel + dragDelta).coerceIn(0f, 2.0f)
                                     volumeLevel = newVol
-                                    val index = (newVol * max).toInt()
-                                    am.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+
+                                    // Haptic feedback tick when crossing the 100% booster boundary
+                                    if ((oldVol <= 1.0f && newVol > 1.0f) || (oldVol > 1.0f && newVol <= 1.0f)) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                    }
+
+                                    if (newVol <= 1.0f) {
+                                        val index = (newVol * max).toInt()
+                                        am.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+                                        onVideoLoudnessBoostChange(100)
+                                    } else {
+                                        // Hold hardware stream volume at max
+                                        am.setStreamVolume(AudioManager.STREAM_MUSIC, max, 0)
+                                        val boostPercent = (newVol * 100).toInt().coerceIn(100, 200)
+                                        onVideoLoudnessBoostChange(boostPercent)
+                                    }
                                 }
                             }
                         }
@@ -584,7 +606,7 @@ fun VideoGestureOverlay(
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xE6121118),
-                border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle)
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (volumeLevel > 1.0f) Color(0xFFFF5722) else GobeatsBorderSubtle)
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
@@ -593,7 +615,7 @@ fun VideoGestureOverlay(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = null,
-                        tint = GobeatsAmber,
+                        tint = if (volumeLevel > 1.0f) Color(0xFFFF5722) else GobeatsAmber,
                         modifier = Modifier.size(20.dp)
                     )
 
@@ -607,21 +629,36 @@ fun VideoGestureOverlay(
                             .background(Color(0xFF27272A)),
                         contentAlignment = Alignment.BottomCenter
                     ) {
+                        val barHeightFraction = (volumeLevel / 2f).coerceIn(0f, 1f)
+                        val isBoosted = volumeLevel > 1.0f
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .fillMaxHeight(volumeLevel)
+                                .fillMaxHeight(barHeightFraction)
                                 .clip(RoundedCornerShape(3.dp))
-                                .background(GobeatsAmber)
+                                .background(
+                                    if (isBoosted) {
+                                        Brush.verticalGradient(
+                                            listOf(Color(0xFFFF3D00), GobeatsAmber)
+                                        )
+                                    } else {
+                                        Brush.verticalGradient(
+                                            listOf(GobeatsAmber, GobeatsAmber)
+                                        )
+                                    }
+                                )
                         )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
+                    val pct = (volumeLevel * 100).toInt()
+                    val textLabel = if (volumeLevel > 1.0f) "$pct%\n[BOOST]" else "$pct%"
                     Text(
-                        text = "${(volumeLevel * 100).toInt()}%",
-                        fontSize = 10.sp,
+                        text = textLabel,
+                        fontSize = if (volumeLevel > 1.0f) 8.sp else 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = if (volumeLevel > 1.0f) Color(0xFFFF7043) else Color.White,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }

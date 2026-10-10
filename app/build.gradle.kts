@@ -8,17 +8,18 @@ android {
     namespace = "com.example.gobeats"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.gobeats"
+        applicationId = "com.gobeats.player"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

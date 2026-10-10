@@ -79,6 +79,7 @@ import com.example.gobeats.theme.GobeatsSurfaceElevated
 import com.example.gobeats.theme.GobeatsTextMuted
 import com.example.gobeats.theme.GobeatsTextPrimary
 import com.example.gobeats.theme.GobeatsTextSecondary
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -88,9 +89,12 @@ fun SettingsScreen(
     onSearchClick: () -> Unit = {},
     modifier: Modifier = Modifier,
     sleepTimerManager: com.example.gobeats.core.audio.SleepTimerManager? = null,
-    playbackRepository: com.example.gobeats.data.repository.PlaybackRepository? = null
+    playbackRepository: com.example.gobeats.data.repository.PlaybackRepository? = null,
+    dbHelper: com.example.gobeats.core.database.GobeatsDatabaseHelper? = null,
+    onLibraryRefresh: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val profile by settingsRepository.userProfile.collectAsState()
     val settings by settingsRepository.settings.collectAsState()
     val sleepTimerState by (sleepTimerManager?.state ?: kotlinx.coroutines.flow.MutableStateFlow(com.example.gobeats.core.audio.SleepTimerState.Inactive)).collectAsState()
@@ -108,6 +112,45 @@ fun SettingsScreen(
     var showAboutDialog by remember { mutableStateOf(false) }
     var showDownloadsDialog by remember { mutableStateOf(false) }
     var showTopMenu by remember { mutableStateOf(false) }
+
+    val exportBackupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null && dbHelper != null) {
+            scope.launch {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { stream ->
+                        com.example.gobeats.core.backup.BackupRestoreEngine.exportToStream(dbHelper, stream)
+                    }
+                    Toast.makeText(context, "Backup exported successfully!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    val importBackupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null && dbHelper != null) {
+            scope.launch {
+                try {
+                    val result = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        com.example.gobeats.core.backup.BackupRestoreEngine.restoreFromStream(dbHelper, stream)
+                    }
+                    if (result?.success == true) {
+                        onLibraryRefresh()
+                        Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, result?.message ?: "Failed to restore backup", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -483,6 +526,39 @@ fun SettingsScreen(
                         "Select gobeats under Default apps or 'Open by default' for audio and video",
                         Toast.LENGTH_LONG
                     ).show()
+                }
+            )
+        }
+
+        // Section: Data & Backup
+        item {
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "Data & Backup",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = GobeatsTextMuted,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+            )
+
+            SettingsItemRow(
+                icon = Icons.Default.FileDownload,
+                iconTint = Color(0xFF10B981),
+                title = "Backup Playlists & Favorites",
+                subtitle = "Export your curated library to a JSON backup file",
+                onClick = {
+                    val defaultName = "gobeats_backup_${System.currentTimeMillis()}.json"
+                    exportBackupLauncher.launch(defaultName)
+                }
+            )
+
+            SettingsItemRow(
+                icon = Icons.Default.Sync,
+                iconTint = Color(0xFF6366F1),
+                title = "Restore from Backup",
+                subtitle = "Import playlists and favorites from a previous backup",
+                onClick = {
+                    importBackupLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                 }
             )
         }

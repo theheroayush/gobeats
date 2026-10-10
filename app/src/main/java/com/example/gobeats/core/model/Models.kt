@@ -136,6 +136,18 @@ data class PlaybackUiState(
     val isFullscreenCinema: Boolean = false,
     val showStatsForNerds: Boolean = false,
     val isVideoLoopEnabled: Boolean = false,
-    val videoStats: VideoPlaybackStats? = null
+    val videoStats: VideoPlaybackStats? = null,
+    val videoLoudnessBoostPercent: Int = 100,
+    val isSingleRenditionLocalFile: Boolean = false,
+    val resumePrompt: VideoResumePrompt? = null,
+    val crossfadeDurationSec: Int = 0,
+    val gaplessPlayback: Boolean = true,
+    val isCrossfadeActive: Boolean = false
+)
+
+data class VideoResumePrompt(
+    val videoId: String,
+    val positionMs: Long,
+    val durationMs: Long
 )
 

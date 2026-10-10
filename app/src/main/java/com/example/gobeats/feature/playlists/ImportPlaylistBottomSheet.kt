@@ -280,7 +280,7 @@ fun ImportPlaylistBottomSheet(
                 OutlinedTextField(
                     value = rawTextInput,
                     onValueChange = { rawTextInput = it },
-                    label = { Text("Paste songs (e.g. 'The Weeknd - Starboy' or CSV rows)", fontSize = 12.sp) },
+                    label = { Text("Paste songs, M3U content, or direct stream URLs (http/https)", fontSize = 12.sp) },
                     minLines = 5,
                     maxLines = 8,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -301,6 +301,7 @@ fun ImportPlaylistBottomSheet(
 
             // Live Match Diagnostics Card
             importResult?.let { result ->
+                val playableTracks = result.totalPlayableTracks
                 if (result.totalCount > 0) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Surface(
@@ -317,14 +318,18 @@ fun ImportPlaylistBottomSheet(
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector = if (result.matchedTracks.isNotEmpty()) Icons.Default.CheckCircle else Icons.Default.Info,
+                                        imageVector = if (playableTracks.isNotEmpty()) Icons.Default.CheckCircle else Icons.Default.Info,
                                         contentDescription = null,
-                                        tint = if (result.matchedTracks.isNotEmpty()) GobeatsSuccess else GobeatsAmber,
+                                        tint = if (playableTracks.isNotEmpty()) GobeatsSuccess else GobeatsAmber,
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Matched ${result.matchedTracks.size} of ${result.totalCount} songs",
+                                        text = if (result.streamTracks.isNotEmpty()) {
+                                            "Ready: ${result.matchedTracks.size} local + ${result.streamTracks.size} online streams"
+                                        } else {
+                                            "Matched ${result.matchedTracks.size} of ${result.totalCount} songs"
+                                        },
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = GobeatsTextPrimary
@@ -338,9 +343,9 @@ fun ImportPlaylistBottomSheet(
                                 )
                             }
 
-                            if (result.matchedTracks.isNotEmpty()) {
+                            if (playableTracks.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(8.dp))
-                                result.matchedTracks.take(4).forEach { track ->
+                                playableTracks.take(4).forEach { track ->
                                     Text(
                                         text = "✓ ${track.artistName} — ${track.title}",
                                         fontSize = 11.sp,
@@ -350,9 +355,9 @@ fun ImportPlaylistBottomSheet(
                                         modifier = Modifier.padding(vertical = 1.dp)
                                     )
                                 }
-                                if (result.matchedTracks.size > 4) {
+                                if (playableTracks.size > 4) {
                                     Text(
-                                        text = "+ ${result.matchedTracks.size - 4} more matched tracks in your library",
+                                        text = "+ ${playableTracks.size - 4} more tracks ready to import",
                                         fontSize = 11.sp,
                                         color = GobeatsAmber,
                                         modifier = Modifier.padding(top = 2.dp)
@@ -375,13 +380,13 @@ fun ImportPlaylistBottomSheet(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            val matchedCount = importResult?.matchedTracks?.size ?: 0
+            val playableCount = importResult?.totalPlayableTracks?.size ?: 0
             GobeatsPrimaryButton(
-                text = if (matchedCount > 0) "Import $matchedCount Matched Songs" else "Create Empty Imported Playlist",
-                enabled = rawTextInput.isNotBlank() || selectedFileName != null,
+                text = if (playableCount > 0) "Import $playableCount Playable Songs" else "Create Empty Imported Playlist",
+                enabled = rawTextInput.isNotBlank() || selectedFileName != null || playlistName.isNotBlank(),
                 onClick = {
                     val finalName = playlistName.trim().ifBlank { "Imported Playlist" }
-                    val tracksToImport = importResult?.matchedTracks ?: emptyList()
+                    val tracksToImport = importResult?.totalPlayableTracks ?: emptyList()
                     onImportConfirm(finalName, tracksToImport)
                 }
             )

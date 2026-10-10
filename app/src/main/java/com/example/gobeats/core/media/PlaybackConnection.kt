@@ -13,6 +13,9 @@ import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.RepeatMode
 import com.example.gobeats.core.model.Track
 import com.example.gobeats.core.model.VideoAspectMode
+import com.example.gobeats.core.model.VideoResumePrompt
+import com.example.gobeats.core.playback.ProcessDeathPersistenceEngine
+import com.example.gobeats.core.video.SubtitleDetector
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
@@ -22,9 +25,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PlaybackConnection(
     private val context: Context,
@@ -40,10 +45,48 @@ class PlaybackConnection(
     private var currentQueue: List<Track> = emptyList()
     private var positionJob: Job? = null
     private var pendingPlay: Pair<Track, List<Track>>? = null
+    private var baseTrackVolume: Float = 1.0f
+    private var fadeInJob: Job? = null
+    private var settingsRepo: com.example.gobeats.data.repository.SettingsRepository? = null
 
     init {
         initController()
+        try {
+            settingsRepo = com.example.gobeats.data.repository.SettingsRepository(context)
+            settingsRepo?.let { repo ->
+                _playbackState.update {
+                    it.copy(
+                        crossfadeDurationSec = repo.settings.value.crossfadeDurationSec,
+                        gaplessPlayback = repo.settings.value.gaplessPlayback
+                    )
+                }
+                scope.launch {
+                    repo.settings.collect { appSettings ->
+                        _playbackState.update {
+                            it.copy(
+                                crossfadeDurationSec = appSettings.crossfadeDurationSec,
+                                gaplessPlayback = appSettings.gaplessPlayback
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        scope.launch {
+            _playbackState.collectLatest { state ->
+                try {
+                    com.example.gobeats.feature.widget.GobeatsAppWidgetProvider.notifyPlaybackChanged(
+                        context,
+                        state.currentTrack?.title,
+                        state.currentTrack?.artistName,
+                        state.isPlaying
+                    )
+                } catch (_: Exception) {}
+            }
+        }
     }
+
 
     private fun initController() {
         val sessionToken = SessionToken(
@@ -54,9 +97,12 @@ class PlaybackConnection(
         controllerFuture?.addListener({
             controller = controllerFuture?.get()
             setupPlayerListener()
-            pendingPlay?.let { (t, q) ->
+            val pending = pendingPlay
+            if (pending != null) {
                 pendingPlay = null
-                playTrack(t, q)
+                playTrack(pending.first, pending.second)
+            } else {
+                restorePlaybackStateIfEmpty()
             }
         }, MoreExecutors.directExecutor())
     }
@@ -71,10 +117,20 @@ class PlaybackConnection(
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _playbackState.update { it.copy(isPlaying = isPlaying) }
-                if (isPlaying) startPositionUpdates() else stopPositionUpdates()
+                if (isPlaying) {
+                    startPositionUpdates()
+                } else {
+                    stopPositionUpdates()
+                    persistCurrentVideoPosition()
+                    persistCurrentPlaybackState()
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                persistCurrentVideoPosition()
+                persistCurrentPlaybackState()
+                fadeInJob?.cancel()
+                val crossfadeSec = _playbackState.value.crossfadeDurationSec
                 val mediaId = mediaItem?.mediaId ?: return
                 val currentTrack = currentQueue.find { it.id == mediaId }
                 val currentIndex = currentQueue.indexOf(currentTrack).coerceAtLeast(0)
@@ -91,13 +147,27 @@ class PlaybackConnection(
                 }
 
                 if (currentTrack != null) {
+                    if (currentTrack.isVideo) {
+                        checkAndShowVideoResumePrompt(currentTrack.id)
+                    } else {
+                        _playbackState.update { it.copy(resumePrompt = null) }
+                    }
                     scope.launch(Dispatchers.IO) {
                         dbHelper.recordTrackPlayed(currentTrack.id)
                         val eqMgr = (context.applicationContext as? com.example.gobeats.GobeatsApplication)?.equalizerManager
-                        if (eqMgr != null) {
-                            val rgResult = eqMgr.computeTrackReplayGain(currentTrack)
-                            scope.launch(Dispatchers.Main) {
-                                controller?.volume = rgResult.linearVolume
+                        val targetVolume = if (eqMgr != null) {
+                            eqMgr.computeTrackReplayGain(currentTrack).linearVolume
+                        } else {
+                            1.0f
+                        }
+                        baseTrackVolume = targetVolume
+
+                        scope.launch(Dispatchers.Main) {
+                            if (crossfadeSec > 0 && !currentTrack.isVideo) {
+                                startFadeInRamp(targetVolume, crossfadeSec)
+                            } else {
+                                controller?.volume = targetVolume
+                                _playbackState.update { it.copy(isCrossfadeActive = false) }
                             }
                         }
                     }
@@ -182,6 +252,15 @@ class PlaybackConnection(
                     nativeHeight = _playbackState.value.videoHeight
                 }
 
+                val videoGroups = tracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO }
+                val totalVideoFormats = videoGroups.sumOf { it.length }
+                val currentTrackUri = _playbackState.value.currentTrack?.fileUri ?: ""
+                val isAdaptiveStream = currentTrackUri.endsWith(".m3u8", ignoreCase = true) ||
+                        currentTrackUri.endsWith(".mpd", ignoreCase = true) ||
+                        currentTrackUri.contains("m3u8", ignoreCase = true) ||
+                        currentTrackUri.contains("mpd", ignoreCase = true)
+                val isSingleRenditionLocal = totalVideoFormats <= 1 && !isAdaptiveStream
+
                 val currentSelectedQuality = _playbackState.value.selectedVideoQualityId
                 val qualityList = mutableListOf<com.example.gobeats.core.model.VideoQualityOption>()
 
@@ -206,32 +285,46 @@ class PlaybackConnection(
                         resolutionLabel = if (nativeWidth > 0) "${nativeWidth}x${nativeHeight}" else "Native",
                         frameRate = nativeFps,
                         bitrate = nativeBitrate,
-                        isSelected = currentSelectedQuality == "auto",
+                        isSelected = currentSelectedQuality == "auto" || (isSingleRenditionLocal && currentSelectedQuality !in listOf("auto", "original")),
                         isAuto = true
                     )
                 )
 
-                val ladder = listOf(
-                    Triple("2160p", "4K (2160p)", 2160 to 3840),
-                    Triple("1440p", "1440p (QHD)", 1440 to 2560),
-                    Triple("1080p", "1080p (FHD)", 1080 to 1920),
-                    Triple("720p", "720p (HD)", 720 to 1280),
-                    Triple("480p", "480p (SD)", 480 to 854),
-                    Triple("360p", "360p (Data Saver)", 360 to 640)
-                )
-
-                for ((id, label, dims) in ladder) {
-                    if (nativeHeight <= 0 || dims.first <= nativeHeight || id == "1080p" || id == "720p" || id == "480p") {
-                        qualityList.add(
-                            com.example.gobeats.core.model.VideoQualityOption(
-                                id = id,
-                                label = label,
-                                resolutionLabel = "${dims.second}x${dims.first}",
-                                maxHeight = dims.first,
-                                maxWidth = dims.second,
-                                isSelected = currentSelectedQuality == id
-                            )
+                if (isSingleRenditionLocal) {
+                    // For single-rendition local files: provide Native/Original option without downscaling constraints
+                    qualityList.add(
+                        com.example.gobeats.core.model.VideoQualityOption(
+                            id = "original",
+                            label = if (nativeHeight > 0) "Original (${nativeHeight}p - Local File)" else "Original (Native)",
+                            resolutionLabel = if (nativeWidth > 0) "${nativeWidth}x${nativeHeight}" else "Native",
+                            frameRate = nativeFps,
+                            bitrate = nativeBitrate,
+                            isSelected = currentSelectedQuality == "original"
                         )
+                    )
+                } else {
+                    val ladder = listOf(
+                        Triple("2160p", "4K (2160p)", 2160 to 3840),
+                        Triple("1440p", "1440p (QHD)", 1440 to 2560),
+                        Triple("1080p", "1080p (FHD)", 1080 to 1920),
+                        Triple("720p", "720p (HD)", 720 to 1280),
+                        Triple("480p", "480p (SD)", 480 to 854),
+                        Triple("360p", "360p (Data Saver)", 360 to 640)
+                    )
+
+                    for ((id, label, dims) in ladder) {
+                        if (nativeHeight <= 0 || dims.first <= nativeHeight || id == "1080p" || id == "720p" || id == "480p") {
+                            qualityList.add(
+                                com.example.gobeats.core.model.VideoQualityOption(
+                                    id = id,
+                                    label = label,
+                                    resolutionLabel = "${dims.second}x${dims.first}",
+                                    maxHeight = dims.first,
+                                    maxWidth = dims.second,
+                                    isSelected = currentSelectedQuality == id
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -241,11 +334,35 @@ class PlaybackConnection(
                         selectedAudioTrackIndex = selectedAudioIdx,
                         subtitleTracks = subtitleList,
                         selectedSubtitleTrackIndex = selectedSubtitleIdx,
-                        videoQualityOptions = qualityList
+                        videoQualityOptions = qualityList,
+                        isSingleRenditionLocalFile = isSingleRenditionLocal
                     )
                 }
             }
         })
+    }
+
+    private fun startFadeInRamp(targetVolume: Float, crossfadeSec: Int) {
+        fadeInJob?.cancel()
+        val player = controller ?: return
+        player.volume = 0.0f
+        _playbackState.update { it.copy(isCrossfadeActive = true) }
+
+        fadeInJob = scope.launch {
+            val rampDurationMs = (crossfadeSec * 1000L).coerceAtMost(2500L)
+            val stepIntervalMs = 50L
+            val totalSteps = (rampDurationMs / stepIntervalMs).toInt().coerceAtLeast(1)
+
+            for (step in 1..totalSteps) {
+                delay(stepIntervalMs)
+                if (!isActive) break
+                val progress = step.toFloat() / totalSteps.toFloat()
+                val (_, volIn) = com.example.gobeats.core.audio.CrossfadeEngine.computeEqualPowerVolumes(progress)
+                player.volume = (targetVolume * volIn).coerceIn(0f, 1f)
+            }
+            player.volume = targetVolume
+            _playbackState.update { it.copy(isCrossfadeActive = false) }
+        }
     }
 
     var onTrackEndedListener: (() -> Unit)? = null
@@ -253,8 +370,63 @@ class PlaybackConnection(
     private fun startPositionUpdates() {
         positionJob?.cancel()
         positionJob = scope.launch {
+            var tick = 0
             while (isActive) {
                 controller?.let { player ->
+                    // Audiophile Crossfade evaluation
+                    if (!_playbackState.value.isVideoMode) {
+                        val crossfadeSec = _playbackState.value.crossfadeDurationSec
+                        val queueIdx = _playbackState.value.queueIndex
+                        val qSize = currentQueue.size
+                        val repMode = _playbackState.value.repeatMode
+                        val pos = player.currentPosition
+                        val dur = player.duration
+
+                        val shouldFade = com.example.gobeats.core.audio.CrossfadeEngine.shouldTriggerCrossfade(
+                            currentPosMs = pos,
+                            durationMs = dur,
+                            crossfadeSec = crossfadeSec,
+                            queueIndex = queueIdx,
+                            queueSize = qSize,
+                            repeatMode = repMode
+                        )
+
+                        if (shouldFade && fadeInJob?.isActive != true) {
+                            val progress = com.example.gobeats.core.audio.CrossfadeEngine.calculateProgress(pos, dur, crossfadeSec)
+                            val (volOut, _) = com.example.gobeats.core.audio.CrossfadeEngine.computeEqualPowerVolumes(progress)
+                            player.volume = (baseTrackVolume * volOut).coerceIn(0f, 1f)
+                            if (!_playbackState.value.isCrossfadeActive) {
+                                _playbackState.update { it.copy(isCrossfadeActive = true) }
+                            }
+                        } else if (!shouldFade && fadeInJob?.isActive != true && _playbackState.value.isCrossfadeActive) {
+                            player.volume = baseTrackVolume
+                            _playbackState.update { it.copy(isCrossfadeActive = false) }
+                        }
+                    }
+
+                    tick++
+                    if (tick % 20 == 0 && player.isPlaying) {
+                        persistCurrentPlaybackState()
+                    }
+                    if (tick % 16 == 0 && _playbackState.value.isVideoMode) {
+                        val currentTrack = _playbackState.value.currentTrack
+                        if (currentTrack != null) {
+                            val pos = player.currentPosition
+                            val dur = player.duration
+                            if (pos > 5000L && dur > 10000L) {
+                                if (pos >= dur - 10000L) {
+                                    scope.launch(Dispatchers.IO) {
+                                        dbHelper.clearVideoPosition(currentTrack.id)
+                                    }
+                                } else {
+                                    scope.launch(Dispatchers.IO) {
+                                        dbHelper.saveVideoPosition(currentTrack.id, pos, dur)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     var liveStats: com.example.gobeats.core.model.VideoPlaybackStats? = null
                     if (_playbackState.value.isVideoMode) {
                         var vFormat: androidx.media3.common.Format? = null
@@ -323,8 +495,131 @@ class PlaybackConnection(
         }
     }
 
+    private fun persistCurrentVideoPosition() {
+        val player = controller ?: return
+        val currentTrack = _playbackState.value.currentTrack ?: return
+        if (_playbackState.value.isVideoMode && currentTrack.isVideo) {
+            val pos = player.currentPosition
+            val dur = player.duration
+            if (pos > 5000L && dur > 10000L) {
+                if (pos >= dur - 10000L) {
+                    scope.launch(Dispatchers.IO) {
+                        dbHelper.clearVideoPosition(currentTrack.id)
+                    }
+                } else {
+                    scope.launch(Dispatchers.IO) {
+                        dbHelper.saveVideoPosition(currentTrack.id, pos, dur)
+                    }
+                }
+            }
+        }
+    }
+
+    fun persistCurrentPlaybackState() {
+        val player = controller ?: return
+        val currentTrack = _playbackState.value.currentTrack
+        val queueIds = currentQueue.map { it.id }
+        val pos = player.currentPosition.coerceAtLeast(0L)
+        val isPlaying = player.isPlaying
+        scope.launch(Dispatchers.IO) {
+            dbHelper.savePlaybackState(
+                trackId = currentTrack?.id,
+                positionMs = pos,
+                queueIds = queueIds,
+                isPlaying = isPlaying
+            )
+        }
+    }
+
+    private fun restorePlaybackStateIfEmpty() {
+        val player = controller ?: return
+        if (player.mediaItemCount == 0) {
+            scope.launch(Dispatchers.IO) {
+                val savedState = dbHelper.getPlaybackState()
+                if (savedState != null && savedState.queueTrackIds.isNotEmpty()) {
+                    val dbTracks = dbHelper.getTracksByIds(savedState.queueTrackIds)
+                    val restoredTracks = ProcessDeathPersistenceEngine.sortTracksByQueueIds(dbTracks, savedState.queueTrackIds)
+                    if (restoredTracks.isNotEmpty()) {
+                        val targetIndex = restoredTracks.indexOfFirst { it.id == savedState.currentTrackId }.coerceAtLeast(0)
+                        val activeTrack = restoredTracks.getOrNull(targetIndex)
+                        val mediaItems = restoredTracks.map { buildMediaItem(it) }
+                        val safePosition = savedState.positionMs.coerceAtLeast(0L)
+
+                        withContext(Dispatchers.Main) {
+                            val activePlayer = controller ?: return@withContext
+                            if (activePlayer.mediaItemCount == 0) {
+                                currentQueue = restoredTracks
+                                activePlayer.setMediaItems(mediaItems, targetIndex, safePosition)
+                                activePlayer.prepare()
+                                activePlayer.playWhenReady = false // strictly paused on process death restoration
+                                _playbackState.update {
+                                    it.copy(
+                                        currentTrack = activeTrack,
+                                        queue = restoredTracks,
+                                        queueIndex = targetIndex,
+                                        currentPositionMs = safePosition,
+                                        durationMs = activeTrack?.durationMs ?: 0L,
+                                        isPlaying = false,
+                                        isVideoMode = activeTrack?.isVideo ?: false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun checkAndShowVideoResumePrompt(trackId: String) {
+        scope.launch {
+            val savedPos = dbHelper.getVideoPosition(trackId)
+            if (savedPos != null && savedPos.positionMs > 5000L && (savedPos.durationMs <= 0L || savedPos.positionMs < savedPos.durationMs - 10000L)) {
+                _playbackState.update {
+                    it.copy(
+                        resumePrompt = VideoResumePrompt(
+                            videoId = trackId,
+                            positionMs = savedPos.positionMs,
+                            durationMs = savedPos.durationMs
+                        )
+                    )
+                }
+            } else {
+                _playbackState.update { it.copy(resumePrompt = null) }
+            }
+        }
+    }
+
     private fun stopPositionUpdates() {
         positionJob?.cancel()
+    }
+
+    private fun buildMediaItem(track: Track): MediaItem {
+        val parsedUri = Uri.parse(track.fileUri)
+        val metadata = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artistName)
+            .setAlbumTitle(track.albumTitle)
+            .setArtworkUri(if (track.artworkUri != null) Uri.parse(track.artworkUri) else null)
+            .build()
+
+        val requestMetadata = MediaItem.RequestMetadata.Builder()
+            .setMediaUri(parsedUri)
+            .build()
+
+        val subtitleConfigs = mutableListOf<MediaItem.SubtitleConfiguration>()
+        if (track.isVideo) {
+            val detected = SubtitleDetector.detectSubtitles(context, track)
+            subtitleConfigs.addAll(detected.map { it.toSubtitleConfiguration() })
+        }
+
+        return MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(parsedUri)
+            .setRequestMetadata(requestMetadata)
+            .setMediaMetadata(metadata)
+            .setSubtitleConfigurations(subtitleConfigs)
+            .build()
     }
 
     fun playTrack(track: Track, queue: List<Track>) {
@@ -345,25 +640,17 @@ class PlaybackConnection(
                     videoHeight = track.videoHeight
                 )
             }
+            if (track.isVideo) {
+                checkAndShowVideoResumePrompt(track.id)
+            } else {
+                _playbackState.update { it.copy(resumePrompt = null) }
+            }
             return
         }
 
         currentQueue = queue
 
-        val mediaItems = queue.map { qTrack ->
-            val metadata = MediaMetadata.Builder()
-                .setTitle(qTrack.title)
-                .setArtist(qTrack.artistName)
-                .setAlbumTitle(qTrack.albumTitle)
-                .setArtworkUri(if (qTrack.artworkUri != null) Uri.parse(qTrack.artworkUri) else null)
-                .build()
-
-            MediaItem.Builder()
-                .setMediaId(qTrack.id)
-                .setUri(Uri.parse(qTrack.fileUri))
-                .setMediaMetadata(metadata)
-                .build()
-        }
+        val mediaItems = queue.map { qTrack -> buildMediaItem(qTrack) }
 
         player.setMediaItems(mediaItems, trackIndex, 0L)
         player.prepare()
@@ -380,11 +667,19 @@ class PlaybackConnection(
                 videoHeight = track.videoHeight
             )
         }
+
+        if (track.isVideo) {
+            checkAndShowVideoResumePrompt(track.id)
+        } else {
+            _playbackState.update { it.copy(resumePrompt = null) }
+        }
+        persistCurrentPlaybackState()
     }
 
     fun togglePlayPause() {
         val player = controller ?: return
         if (player.isPlaying) {
+            persistCurrentVideoPosition()
             player.pause()
         } else {
             player.play()
@@ -393,12 +688,19 @@ class PlaybackConnection(
 
     fun seekTo(positionMs: Long) {
         val player = controller ?: return
+        fadeInJob?.cancel()
+        _playbackState.update { it.copy(isCrossfadeActive = false) }
+        player.volume = baseTrackVolume
         player.seekTo(positionMs)
         _playbackState.update { it.copy(currentPositionMs = positionMs) }
+        persistCurrentPlaybackState()
     }
 
     fun playNext() {
         val player = controller ?: return
+        fadeInJob?.cancel()
+        _playbackState.update { it.copy(isCrossfadeActive = false) }
+        player.volume = baseTrackVolume
         if (player.hasNextMediaItem()) {
             player.seekToNextMediaItem()
         }
@@ -406,6 +708,9 @@ class PlaybackConnection(
 
     fun playPrevious() {
         val player = controller ?: return
+        fadeInJob?.cancel()
+        _playbackState.update { it.copy(isCrossfadeActive = false) }
+        player.volume = baseTrackVolume
         if (player.currentPosition > 3000L) {
             player.seekTo(0L)
         } else if (player.hasPreviousMediaItem()) {
@@ -413,6 +718,17 @@ class PlaybackConnection(
         } else {
             player.seekTo(0L)
         }
+    }
+
+    fun setCrossfadeDuration(seconds: Int) {
+        val clamped = seconds.coerceIn(0, 12)
+        _playbackState.update { it.copy(crossfadeDurationSec = clamped) }
+        settingsRepo?.setPlaybackSettings(clamped, _playbackState.value.gaplessPlayback)
+    }
+
+    fun setGaplessPlayback(enabled: Boolean) {
+        _playbackState.update { it.copy(gaplessPlayback = enabled) }
+        settingsRepo?.setPlaybackSettings(_playbackState.value.crossfadeDurationSec, enabled)
     }
 
     fun setShuffle(enabled: Boolean) {
@@ -449,18 +765,7 @@ class PlaybackConnection(
         val currentList = currentQueue.toMutableList()
         val currentIndex = _playbackState.value.queueIndex
 
-        val metadata = MediaMetadata.Builder()
-            .setTitle(track.title)
-            .setArtist(track.artistName)
-            .setAlbumTitle(track.albumTitle)
-            .setArtworkUri(if (track.artworkUri != null) Uri.parse(track.artworkUri) else null)
-            .build()
-
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(track.id)
-            .setUri(Uri.parse(track.fileUri))
-            .setMediaMetadata(metadata)
-            .build()
+        val mediaItem = buildMediaItem(track)
 
         val insertIndex = (currentIndex + 1).coerceAtMost(currentList.size)
         currentList.add(insertIndex, track)
@@ -468,30 +773,21 @@ class PlaybackConnection(
 
         player.addMediaItem(insertIndex, mediaItem)
         _playbackState.update { it.copy(queue = currentList) }
+        persistCurrentPlaybackState()
     }
 
     fun addToQueue(track: Track) {
         val player = controller ?: return
         val currentList = currentQueue.toMutableList()
 
-        val metadata = MediaMetadata.Builder()
-            .setTitle(track.title)
-            .setArtist(track.artistName)
-            .setAlbumTitle(track.albumTitle)
-            .setArtworkUri(if (track.artworkUri != null) Uri.parse(track.artworkUri) else null)
-            .build()
-
-        val mediaItem = MediaItem.Builder()
-            .setMediaId(track.id)
-            .setUri(Uri.parse(track.fileUri))
-            .setMediaMetadata(metadata)
-            .build()
+        val mediaItem = buildMediaItem(track)
 
         currentList.add(track)
         currentQueue = currentList
 
         player.addMediaItem(mediaItem)
         _playbackState.update { it.copy(queue = currentList) }
+        persistCurrentPlaybackState()
     }
 
     fun removeFromQueue(index: Int) {
@@ -507,6 +803,7 @@ class PlaybackConnection(
             _playbackState.value.queueIndex.coerceAtMost(currentList.lastIndex.coerceAtLeast(0))
         }
         _playbackState.update { it.copy(queue = currentList, queueIndex = newIndex) }
+        persistCurrentPlaybackState()
     }
 
     fun clearQueue() {
@@ -525,6 +822,7 @@ class PlaybackConnection(
             currentQueue = emptyList()
             _playbackState.update { it.copy(queue = emptyList(), queueIndex = 0, currentTrack = null, isPlaying = false) }
         }
+        persistCurrentPlaybackState()
     }
 
     fun moveQueueItem(fromIndex: Int, toIndex: Int) {
@@ -541,6 +839,7 @@ class PlaybackConnection(
         val currentTrackId = _playbackState.value.currentTrack?.id
         val newIndex = currentList.indexOfFirst { it.id == currentTrackId }.coerceAtLeast(0)
         _playbackState.update { it.copy(queue = currentList, queueIndex = newIndex) }
+        persistCurrentPlaybackState()
     }
 
     fun shuffleQueue() {
@@ -559,21 +858,11 @@ class PlaybackConnection(
             player.removeMediaItem(currentIndex + 1)
         }
         for (track in tail) {
-            val metadata = MediaMetadata.Builder()
-                .setTitle(track.title)
-                .setArtist(track.artistName)
-                .setAlbumTitle(track.albumTitle)
-                .setArtworkUri(if (track.artworkUri != null) Uri.parse(track.artworkUri) else null)
-                .build()
-            val mediaItem = MediaItem.Builder()
-                .setMediaId(track.id)
-                .setUri(Uri.parse(track.fileUri))
-                .setMediaMetadata(metadata)
-                .build()
-            player.addMediaItem(mediaItem)
+            player.addMediaItem(buildMediaItem(track))
         }
 
         _playbackState.update { it.copy(queue = newQueue) }
+        persistCurrentPlaybackState()
     }
 
     fun seekBy(offsetMs: Long) {
@@ -589,7 +878,7 @@ class PlaybackConnection(
         player.volume = volume.coerceIn(0f, 1f)
     }
 
-    fun getPlayer(): Player? = controller
+    fun getPlayer(): Player? = GobeatsMediaSessionService.activePlayer ?: controller
 
     fun toggleVideoMode(enabled: Boolean) {
         _playbackState.update { it.copy(isVideoMode = enabled) }
@@ -660,15 +949,20 @@ class PlaybackConnection(
 
     fun selectVideoQuality(optionId: String) {
         controller?.let { player ->
+            val isSingleRendition = _playbackState.value.isSingleRenditionLocalFile
             val paramsBuilder = player.trackSelectionParameters.buildUpon()
-            when (optionId) {
-                "auto" -> paramsBuilder.clearVideoSizeConstraints()
-                "2160p" -> paramsBuilder.setMaxVideoSize(3840, 2160)
-                "1440p" -> paramsBuilder.setMaxVideoSize(2560, 1440)
-                "1080p" -> paramsBuilder.setMaxVideoSize(1920, 1080)
-                "720p" -> paramsBuilder.setMaxVideoSize(1280, 720)
-                "480p" -> paramsBuilder.setMaxVideoSize(854, 480)
-                "360p" -> paramsBuilder.setMaxVideoSize(640, 360)
+            if (isSingleRendition || optionId == "auto" || optionId == "original") {
+                // Clear any size constraints so single-rendition local files NEVER go black
+                paramsBuilder.clearVideoSizeConstraints()
+            } else {
+                when (optionId) {
+                    "2160p" -> paramsBuilder.setMaxVideoSize(3840, 2160)
+                    "1440p" -> paramsBuilder.setMaxVideoSize(2560, 1440)
+                    "1080p" -> paramsBuilder.setMaxVideoSize(1920, 1080)
+                    "720p" -> paramsBuilder.setMaxVideoSize(1280, 720)
+                    "480p" -> paramsBuilder.setMaxVideoSize(854, 480)
+                    "360p" -> paramsBuilder.setMaxVideoSize(640, 360)
+                }
             }
             player.trackSelectionParameters = paramsBuilder.build()
             _playbackState.update { state ->
@@ -679,6 +973,89 @@ class PlaybackConnection(
                 )
             }
         }
+    }
+
+    fun resumeFromSavedPosition() {
+        val prompt = _playbackState.value.resumePrompt ?: return
+        controller?.seekTo(prompt.positionMs)
+        _playbackState.update {
+            it.copy(
+                resumePrompt = null,
+                currentPositionMs = prompt.positionMs
+            )
+        }
+    }
+
+    fun dismissResumePrompt() {
+        _playbackState.update { it.copy(resumePrompt = null) }
+    }
+
+    fun addExternalSubtitle(uri: Uri, customLabel: String? = null) {
+        val player = controller ?: return
+
+        if (uri.scheme == android.content.ContentResolver.SCHEME_CONTENT) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+        }
+
+        val detectedSub = SubtitleDetector.createSubtitleConfigurationFromUri(
+            context = context,
+            uri = uri,
+            customLabel = customLabel
+        )
+
+        val curPos = player.currentPosition
+        val isPlaying = player.isPlaying
+        val mediaItemIndex = player.currentMediaItemIndex
+
+        val currentMediaItem = player.currentMediaItem ?: return
+        val currentSubConfigs = currentMediaItem.localConfiguration?.subtitleConfigurations ?: emptyList()
+        val updatedSubConfigs = currentSubConfigs + detectedSub.toSubtitleConfiguration()
+
+        val updatedMediaItem = currentMediaItem.buildUpon()
+            .setSubtitleConfigurations(updatedSubConfigs)
+            .build()
+
+        player.replaceMediaItem(mediaItemIndex, updatedMediaItem)
+        if (curPos > 0) {
+            player.seekTo(curPos)
+        }
+        if (isPlaying) {
+            player.play()
+        }
+
+        val updatedList = _playbackState.value.subtitleTracks.toMutableList()
+        if (!updatedList.contains(detectedSub.label)) {
+            updatedList.add(detectedSub.label)
+        }
+        val newIndex = updatedList.indexOf(detectedSub.label)
+        _playbackState.update {
+            it.copy(
+                subtitleTracks = updatedList,
+                selectedSubtitleTrackIndex = newIndex
+            )
+        }
+
+        scope.launch {
+            delay(350)
+            selectSubtitleTrack(newIndex)
+        }
+    }
+
+    fun setVideoLoudnessBoost(percent: Int) {
+        val clamped = percent.coerceIn(100, 200)
+        _playbackState.update { it.copy(videoLoudnessBoostPercent = clamped) }
+        val gainMb = if (clamped > 100) {
+            ((clamped - 100) * 15).coerceIn(0, 1500)
+        } else {
+            0
+        }
+        val eqMgr = (context.applicationContext as? com.example.gobeats.GobeatsApplication)?.equalizerManager
+        eqMgr?.setVideoLoudnessBoostGainMb(gainMb)
     }
 
     private var userPreferredSpeed: Float = 1.0f
@@ -742,25 +1119,14 @@ class PlaybackConnection(
 
         controller?.let { player ->
             if (index != -1 && index < player.mediaItemCount) {
-                val metadata = MediaMetadata.Builder()
-                    .setTitle(updatedTrack.title)
-                    .setArtist(updatedTrack.artistName)
-                    .setAlbumTitle(updatedTrack.albumTitle)
-                    .setArtworkUri(if (updatedTrack.artworkUri != null) Uri.parse(updatedTrack.artworkUri) else null)
-                    .build()
-
-                val mediaItem = MediaItem.Builder()
-                    .setMediaId(updatedTrack.id)
-                    .setUri(Uri.parse(updatedTrack.fileUri))
-                    .setMediaMetadata(metadata)
-                    .build()
-
-                player.replaceMediaItem(index, mediaItem)
+                player.replaceMediaItem(index, buildMediaItem(updatedTrack))
             }
         }
     }
 
     fun release() {
+        persistCurrentVideoPosition()
+        persistCurrentPlaybackState()
         positionJob?.cancel()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null

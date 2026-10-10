@@ -60,6 +60,11 @@ class GobeatsSyncServer(
     )
     val state: StateFlow<SyncServerState> = _state.asStateFlow()
 
+    private val _activeTransferStats = MutableStateFlow<TransferStats?>(null)
+    val activeTransferStats: StateFlow<TransferStats?> = _activeTransferStats.asStateFlow()
+
+    var onTransferProgress: ((fileName: String, stats: TransferStats) -> Unit)? = null
+
     fun getLocalIpAddress(): String {
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
@@ -109,6 +114,7 @@ class GobeatsSyncServer(
 
     fun stopServer() {
         _state.value = _state.value.copy(isRunning = false)
+        _activeTransferStats.value = null
         try {
             serverSocket?.close()
         } catch (_: Exception) {}
@@ -132,6 +138,7 @@ class GobeatsSyncServer(
 
             var contentLength = 0
             var contentType = ""
+            var headerFileName = ""
             var line: String? = reader.readLine()
             while (!line.isNullOrEmpty()) {
                 if (line.startsWith("Content-Length:", ignoreCase = true)) {
@@ -139,6 +146,9 @@ class GobeatsSyncServer(
                 }
                 if (line.startsWith("Content-Type:", ignoreCase = true)) {
                     contentType = line.substring(13).trim()
+                }
+                if (line.startsWith("X-File-Name:", ignoreCase = true)) {
+                    headerFileName = line.substring(12).trim()
                 }
                 line = reader.readLine()
             }
@@ -152,7 +162,14 @@ class GobeatsSyncServer(
                     send404(output)
                 }
             } else if (method.equals("POST", ignoreCase = true) && path.startsWith("/upload")) {
-                handleFileUpload(input, output, contentLength, contentType)
+                val queryName = path.substringAfter("name=", "").substringBefore("&")
+                val rawName = queryName.ifBlank { headerFileName }
+                val decodedName = try {
+                    java.net.URLDecoder.decode(rawName, "UTF-8")
+                } catch (_: Exception) {
+                    rawName
+                }
+                handleFileUpload(input, output, contentLength, contentType, decodedName)
             } else {
                 send404(output)
             }
@@ -166,14 +183,42 @@ class GobeatsSyncServer(
         input: InputStream,
         output: OutputStream,
         contentLength: Int,
-        contentType: String
+        contentType: String,
+        originalFileName: String
     ) {
         val targetDir = File(context.getExternalFilesDir(null), "Music").apply { mkdirs() }
-        val fileName = "gobeats_sync_${System.currentTimeMillis()}.mp3"
+        val sanitizedOriginal = originalFileName
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .replace(Regex("""[^\w\.\-\s\(\)\[\]]"""), "_")
+            .trim()
+
+        val defaultExt = when {
+            contentType.contains("flac", true) -> "flac"
+            contentType.contains("wav", true) -> "wav"
+            contentType.contains("mp4", true) && contentType.contains("video", true) -> "mp4"
+            contentType.contains("mp4", true) || contentType.contains("m4a", true) -> "m4a"
+            contentType.contains("opus", true) -> "opus"
+            contentType.contains("ogg", true) -> "ogg"
+            contentType.contains("webm", true) -> "webm"
+            contentType.contains("mpegurl", true) -> "m3u8"
+            contentType.contains("csv", true) -> "csv"
+            else -> "mp3"
+        }
+
+        val fileName = if (sanitizedOriginal.isNotBlank() && sanitizedOriginal.contains('.')) {
+            val base = sanitizedOriginal.substringBeforeLast('.')
+            val ext = sanitizedOriginal.substringAfterLast('.').lowercase()
+            "${base}_${System.currentTimeMillis()}.$ext"
+        } else {
+            "gobeats_sync_${System.currentTimeMillis()}.$defaultExt"
+        }
         val outputFile = File(targetDir, fileName)
 
         var bytesReadTotal = 0L
         val buffer = ByteArray(8192)
+        val startTimeNs = System.nanoTime()
+        var lastProgressNs = startTimeNs
 
         FileOutputStream(outputFile).use { fos ->
             var remaining = contentLength
@@ -184,17 +229,76 @@ class GobeatsSyncServer(
                 fos.write(buffer, 0, read)
                 remaining -= read
                 bytesReadTotal += read
+
+                val nowNs = System.nanoTime()
+                if (nowNs - lastProgressNs >= 100_000_000L || remaining <= 0) {
+                    lastProgressNs = nowNs
+                    val durationSec = (nowNs - startTimeNs) / 1_000_000_000.0
+                    val stats = TransferStats(
+                        bytesTransferred = bytesReadTotal,
+                        totalBytes = contentLength.toLong(),
+                        durationSeconds = durationSec
+                    )
+                    _activeTransferStats.value = stats
+                    onTransferProgress?.invoke(sanitizedOriginal, stats)
+                }
             }
+        }
+
+        val totalDurationSec = (System.nanoTime() - startTimeNs) / 1_000_000_000.0
+        val finalStats = TransferStats(
+            bytesTransferred = bytesReadTotal,
+            totalBytes = if (contentLength > 0) contentLength.toLong() else bytesReadTotal,
+            durationSeconds = totalDurationSec
+        )
+        _activeTransferStats.value = null
+        onTransferProgress?.invoke(sanitizedOriginal, finalStats)
+
+        val ext = outputFile.extension.lowercase()
+        if (ext == "m3u" || ext == "m3u8" || ext == "csv") {
+            val displayBase = sanitizedOriginal.substringBeforeLast('.').ifBlank { outputFile.nameWithoutExtension }
+            val (plName, entries) = outputFile.inputStream().use { stream ->
+                com.example.gobeats.core.playlist.PlaylistImporter.parseStream(stream, displayBase)
+            }
+            val libraryTracks = dbHelper.getAllTracks()
+            val importRes = com.example.gobeats.core.playlist.PlaylistImporter.matchTracks(entries, libraryTracks, plName)
+            importRes.streamTracks.forEach { streamTrack ->
+                dbHelper.insertOrUpdateTrack(streamTrack)
+            }
+            val allPlayable = importRes.totalPlayableTracks
+            val createdPlaylist = dbHelper.createPlaylist(
+                name = importRes.playlistName,
+                description = "Synced via GoBeats Wi-Fi Connect (${allPlayable.size} tracks)"
+            )
+            allPlayable.forEach { t ->
+                dbHelper.addTrackToPlaylist(createdPlaylist.id, t.id)
+            }
+            val newJob = LiveTransferItem(
+                id = UUID.randomUUID().toString(),
+                title = "Playlist: ${createdPlaylist.name}",
+                senderDevice = "Desktop Companion",
+                tracksCount = allPlayable.size,
+                totalSizeMb = (bytesReadTotal / (1024.0 * 1024.0)),
+                progress = 1.0f,
+                timestamp = "Just now",
+                isSuccess = true
+            )
+            _state.value = _state.value.copy(
+                recentTransfers = listOf(newJob) + _state.value.recentTransfers
+            )
+            sendJsonResponse(output, """{"status":"success","track":"${createdPlaylist.name}"}""")
+            return
         }
 
         // Tag extraction and library registration
         val fileUri = android.net.Uri.fromFile(outputFile)
-        val track = com.example.gobeats.core.media.MetadataExtractor.extractMetadata(
+        val displayForExtract = sanitizedOriginal.ifBlank { outputFile.name }
+        val track = MetadataExtractor.extractMetadata(
             context = context,
             uri = fileUri,
             sourceId = "source_local",
             fileSize = bytesReadTotal,
-            displayName = outputFile.name
+            displayName = displayForExtract
         )
         dbHelper.insertOrUpdateTrack(track)
 
@@ -280,9 +384,9 @@ class GobeatsSyncServer(
                 <p style="font-size: 14px; color: #D4D4D8;">Connected to your Android Phone over local Wi-Fi. Drop music files below to transfer instantly without cables or clouds.</p>
                 <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
                     <div style="font-size: 36px; margin-bottom: 12px;">🎵</div>
-                    <h3>Drag & Drop Music Files Here</h3>
-                    <p>Supports FLAC, MP3, WAV, AAC, M4A, OGG</p>
-                    <input type="file" id="fileInput" multiple accept="audio/*" style="display: none;" onchange="handleFiles(this.files)">
+                    <h3>Drag & Drop Music, Videos or Playlists Here</h3>
+                    <p>Supports FLAC, MP3, WAV, AAC, M4A, OPUS, OGG, MP4, MKV, M3U, CSV</p>
+                    <input type="file" id="fileInput" multiple accept="audio/*,video/*,.m3u,.m3u8,.csv" style="display: none;" onchange="handleFiles(this.files)">
                 </div>
                 <button class="btn" onclick="document.getElementById('fileInput').click()">Choose Files from PC</button>
                 <div id="status"></div>
@@ -306,7 +410,12 @@ class GobeatsSyncServer(
                     status.innerText = 'Uploading ' + files.length + ' file(s) to gobeats...';
                     let uploaded = 0;
                     Array.from(files).forEach(file => {
-                        fetch('/upload', { method: 'POST', body: file })
+                        const targetUrl = '/upload?name=' + encodeURIComponent(file.name);
+                        fetch(targetUrl, { 
+                            method: 'POST', 
+                            body: file,
+                            headers: { 'X-File-Name': encodeURIComponent(file.name) }
+                        })
                             .then(res => res.json())
                             .then(data => {
                                 uploaded++;

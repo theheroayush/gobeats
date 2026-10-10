@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionDisabled
 import androidx.compose.material.icons.filled.FastForward
@@ -107,6 +108,9 @@ fun FullscreenVideoPlayer(
     onSetTouchLocked: (Boolean) -> Unit,
     onToggleSubtitles: () -> Unit,
     onCloseStats: () -> Unit,
+    onVideoLoudnessBoostChange: (Int) -> Unit = {},
+    onResumeSavedPosition: () -> Unit = {},
+    onDismissResumePrompt: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -198,6 +202,7 @@ fun FullscreenVideoPlayer(
             isTouchLocked = state.isTouchLocked,
             isFullscreenCinema = true,
             is2xSpeedActive = state.is2xSpeedPreviewActive,
+            videoLoudnessBoostPercent = state.videoLoudnessBoostPercent,
             onSeek = onSeek,
             onDoubleTapLeft = onRewind10s,
             onDoubleTapRight = onFastForward10s,
@@ -212,6 +217,7 @@ fun FullscreenVideoPlayer(
             onPinchZoomOut = onPinchZoomOut,
             onSwipeDownExitFullscreen = onExitFullscreen,
             onUnlockTouch = { onSetTouchLocked(false) },
+            onVideoLoudnessBoostChange = onVideoLoudnessBoostChange,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -493,6 +499,60 @@ fun FullscreenVideoPlayer(
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resume Playback Prompt Banner Overlay
+        state.resumePrompt?.let { prompt ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 88.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xF2121118),
+                    border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.8f)),
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Resume from ${formatDuration(prompt.positionMs)}?",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = GobeatsAmber,
+                            modifier = Modifier.clickable { onResumeSavedPosition() }
+                        ) {
+                            Text(
+                                text = "Resume",
+                                color = Color.Black,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(
+                            onClick = onDismissResumePrompt,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = Color(0xFFA1A1AA),
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                 }

@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">gobeats</string>
+    <string name="widget_name">GoBeats Player</string>
+    <string name="widget_description">Compact music and video player controls for your home screen</string>
 </resources>

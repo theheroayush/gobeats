@@ -31,11 +31,49 @@ object MetadataExtractor {
         hintYear: Int? = null,
         hintIsVideo: Boolean = false
     ): Track {
+        val scheme = uri.scheme?.lowercase() ?: ""
+        val isHttpStream = scheme == "http" || scheme == "https"
+        val resolverMime = if (!isHttpStream) {
+            try { context.contentResolver.getType(uri) } catch (_: Exception) { null }
+        } else null
+
+        if (isHttpStream) {
+            val fileNameOrUri = displayName ?: uri.lastPathSegment ?: uri.host ?: "Internet Stream"
+            val isVid = hintIsVideo || isVideoExtensionOrMime(fileNameOrUri, resolverMime, uri.toString())
+            val tags = parseSmartTags(
+                rawTitle = hintTitle,
+                rawArtist = hintArtist ?: if (isVid) "Video Stream" else "Internet Stream",
+                rawAlbum = hintAlbum ?: "Web Streams",
+                fileNameOrUri = fileNameOrUri
+            )
+            return Track(
+                id = generateStableId(uri.toString()),
+                sourceId = if (sourceId == "source_local") "source_internet" else sourceId,
+                fileUri = uri.toString(),
+                title = tags.title,
+                artistName = tags.artist,
+                albumTitle = tags.album,
+                durationMs = hintDurationMs ?: 0L,
+                genre = if (isVid) "Video" else "Stream",
+                format = detectFormat(resolverMime, uri.toString(), fileNameOrUri),
+                fileSize = fileSize,
+                isAvailable = true,
+                dateAdded = System.currentTimeMillis(),
+                isVideo = isVid
+            )
+        }
+
         val retriever = MediaMetadataRetriever()
         return try {
             try {
                 retriever.setDataSource(context, uri)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+                try {
+                    context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        retriever.setDataSource(pfd.fileDescriptor)
+                    }
+                } catch (_: Exception) {}
+            }
 
             val mmrTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
             val mmrArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
@@ -48,7 +86,7 @@ object MetadataExtractor {
             val yearStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)
                 ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
             val bitrateStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
-            val mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+            val mimeType = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE) ?: resolverMime
             val hasVideoStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
             val videoWidthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
             val videoHeightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
@@ -58,15 +96,13 @@ object MetadataExtractor {
             val rawAlbum = mmrAlbum?.ifBlank { null } ?: hintAlbum?.ifBlank { null }
             val fileNameOrUri = displayName ?: uri.lastPathSegment ?: "Track"
 
-            val isVideo = hintIsVideo ||
-                    (hasVideoStr != null && hasVideoStr.equals("yes", ignoreCase = true)) ||
-                    (mimeType != null && mimeType.startsWith("video/")) ||
-                    fileNameOrUri.endsWith(".mp4", ignoreCase = true) ||
-                    fileNameOrUri.endsWith(".mkv", ignoreCase = true) ||
-                    fileNameOrUri.endsWith(".webm", ignoreCase = true)
-
             val videoWidth = videoWidthStr?.toIntOrNull() ?: 0
             val videoHeight = videoHeightStr?.toIntOrNull() ?: 0
+
+            val isVideo = hintIsVideo ||
+                    (hasVideoStr != null && hasVideoStr.equals("yes", ignoreCase = true)) ||
+                    (videoWidth > 0 && videoHeight > 0) ||
+                    isVideoExtensionOrMime(fileNameOrUri, mimeType, uri.toString())
 
             val smartTags = parseSmartTags(
                 rawTitle = rawTitle,
@@ -134,10 +170,7 @@ object MetadataExtractor {
             )
         } catch (e: Exception) {
             val fileNameOrUri = displayName ?: uri.lastPathSegment ?: "Unknown Track"
-            val isVideoFallback = hintIsVideo ||
-                    fileNameOrUri.endsWith(".mp4", ignoreCase = true) ||
-                    fileNameOrUri.endsWith(".mkv", ignoreCase = true) ||
-                    fileNameOrUri.endsWith(".webm", ignoreCase = true)
+            val isVideoFallback = hintIsVideo || isVideoExtensionOrMime(fileNameOrUri, resolverMime, uri.toString())
             val fallbackTags = parseSmartTags(
                 rawTitle = hintTitle,
                 rawArtist = if (hintArtist.isNullOrBlank() && isVideoFallback) "Music Video" else hintArtist,
@@ -153,7 +186,7 @@ object MetadataExtractor {
                 albumTitle = fallbackTags.album,
                 durationMs = hintDurationMs ?: 0L,
                 genre = if (isVideoFallback) "Video" else null,
-                format = detectFormat(null, uri.toString(), fileNameOrUri),
+                format = detectFormat(resolverMime, uri.toString(), fileNameOrUri),
                 fileSize = fileSize,
                 isAvailable = true,
                 dateAdded = System.currentTimeMillis(),
@@ -164,6 +197,16 @@ object MetadataExtractor {
                 retriever.release()
             } catch (_: Exception) {}
         }
+    }
+
+    fun isVideoExtensionOrMime(fileNameOrUri: String, mimeType: String? = null, fullUri: String = ""): Boolean {
+        if (mimeType != null && mimeType.startsWith("video/", ignoreCase = true)) return true
+        val lower = fileNameOrUri.lowercase()
+        val lowerUri = fullUri.lowercase()
+        val videoExts = listOf(".mp4", ".mkv", ".webm", ".mov", ".avi", ".3gp", ".m4v", ".ts", ".flv")
+        if (videoExts.any { lower.endsWith(it) || lowerUri.endsWith(it) }) return true
+        if (lowerUri.contains("/video/media") || lowerUri.contains("video%3a")) return true
+        return false
     }
 
     /**
@@ -281,22 +324,27 @@ object MetadataExtractor {
         return clean.toIntOrNull()
     }
 
-    private fun detectFormat(mimeType: String?, uriString: String, displayName: String? = null): String {
+    fun detectFormat(mimeType: String?, uriString: String, displayName: String? = null): String {
         val lowerUri = uriString.lowercase()
         val lowerName = displayName?.lowercase() ?: ""
         return when {
             lowerUri.endsWith(".flac") || lowerName.endsWith(".flac") || mimeType?.contains("flac") == true -> "FLAC"
             lowerUri.endsWith(".wav") || lowerName.endsWith(".wav") || mimeType?.contains("wav") == true -> "WAV"
-            lowerUri.endsWith(".mp4") || lowerName.endsWith(".mp4") || mimeType?.contains("video/mp4") == true || mimeType?.contains("mp4") == true -> "MP4"
+            lowerUri.endsWith(".m3u8") || lowerName.endsWith(".m3u8") || mimeType?.contains("mpegurl") == true -> "HLS"
+            lowerUri.endsWith(".mp4") || lowerName.endsWith(".mp4") || lowerUri.endsWith(".m4v") || lowerName.endsWith(".m4v") || mimeType?.contains("video/mp4") == true -> "MP4"
             lowerUri.endsWith(".mkv") || lowerName.endsWith(".mkv") || mimeType?.contains("matroska") == true -> "MKV"
             lowerUri.endsWith(".webm") || lowerName.endsWith(".webm") || mimeType?.contains("webm") == true -> "WEBM"
-            lowerUri.endsWith(".m4a") || lowerName.endsWith(".m4a") || lowerUri.endsWith(".aac") || lowerName.endsWith(".aac") || mimeType?.contains("mp4a") == true -> "AAC"
-            lowerUri.endsWith(".ogg") || lowerName.endsWith(".ogg") || lowerUri.endsWith(".opus") || lowerName.endsWith(".opus") || mimeType?.contains("ogg") == true -> "OGG"
+            lowerUri.endsWith(".mov") || lowerName.endsWith(".mov") || mimeType?.contains("quicktime") == true -> "MOV"
+            lowerUri.endsWith(".avi") || lowerName.endsWith(".avi") || mimeType?.contains("msvideo") == true -> "AVI"
+            lowerUri.endsWith(".m4a") || lowerName.endsWith(".m4a") -> "M4A"
+            lowerUri.endsWith(".aac") || lowerName.endsWith(".aac") || mimeType?.contains("mp4a") == true || mimeType?.contains("aac") == true -> "AAC"
+            lowerUri.endsWith(".opus") || lowerName.endsWith(".opus") || mimeType?.contains("opus") == true -> "OPUS"
+            lowerUri.endsWith(".ogg") || lowerName.endsWith(".ogg") || mimeType?.contains("ogg") == true -> "OGG"
             else -> "MP3"
         }
     }
 
-    private fun generateStableId(input: String): String {
+    fun generateStableId(input: String): String {
         return md5(input)
     }
 

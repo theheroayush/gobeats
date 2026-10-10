@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
@@ -41,12 +42,16 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -116,6 +121,9 @@ fun LibraryScreen(
     var selectedCategory by remember { mutableStateOf("All") }
     var sortOrder by remember { mutableStateOf(LibrarySortOrder.DATE_ADDED) }
     var showTopMenu by remember { mutableStateOf(false) }
+    var librarySearchQuery by remember { mutableStateOf("") }
+    var showUrlStreamDialog by remember { mutableStateOf(false) }
+    var streamUrlInput by remember { mutableStateOf("") }
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -153,11 +161,22 @@ fun LibraryScreen(
         onRescanClick()
     }
 
-    val sortedTracks = remember(tracks, sortOrder) {
-        when (sortOrder) {
+    val sortedTracks = remember(tracks, sortOrder, librarySearchQuery) {
+        val base = when (sortOrder) {
             LibrarySortOrder.TITLE -> tracks.sortedBy { it.title.lowercase() }
             LibrarySortOrder.ARTIST -> tracks.sortedBy { it.artistName.lowercase() }
             LibrarySortOrder.DATE_ADDED -> tracks.sortedByDescending { it.dateAdded }
+        }
+        if (librarySearchQuery.isBlank()) {
+            base
+        } else {
+            val q = librarySearchQuery.trim().lowercase()
+            base.filter {
+                it.title.lowercase().contains(q) ||
+                    it.artistName.lowercase().contains(q) ||
+                    it.albumTitle.lowercase().contains(q) ||
+                    it.genre?.lowercase()?.contains(q) == true
+            }
         }
     }
 
@@ -224,6 +243,14 @@ fun LibraryScreen(
                                 leadingIcon = { Icon(Icons.Default.FileOpen, contentDescription = null, tint = GobeatsAmber) }
                             )
                             DropdownMenuItem(
+                                text = { Text("Open Online Stream or Video URL") },
+                                onClick = {
+                                    showTopMenu = false
+                                    showUrlStreamDialog = true
+                                },
+                                leadingIcon = { Icon(Icons.Default.Link, contentDescription = null, tint = GobeatsAmber) }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Rescan Device Media") },
                                 onClick = {
                                     showTopMenu = false
@@ -275,6 +302,68 @@ fun LibraryScreen(
                     fontSize = 13.sp,
                     color = GobeatsTextSecondary
                 )
+            }
+        }
+
+        // Inline Search Filter Input
+        item {
+            Surface(
+                shape = RoundedCornerShape(percent = 50),
+                color = Color(0xFF16151A),
+                border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .height(44.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = GobeatsTextMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = librarySearchQuery,
+                        onValueChange = { librarySearchQuery = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = GobeatsTextPrimary,
+                            fontSize = 13.sp
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(GobeatsAmber),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { innerTextField ->
+                            if (librarySearchQuery.isEmpty()) {
+                                Text(
+                                    text = "Filter songs, artists, albums in library...",
+                                    fontSize = 13.sp,
+                                    color = GobeatsTextMuted
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                    if (librarySearchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { librarySearchQuery = "" },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear",
+                                tint = GobeatsTextMuted,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -353,7 +442,7 @@ fun LibraryScreen(
                 item {
                     LibraryCategoryTile(
                         title = "Folders",
-                        countText = "Setup",
+                        countText = "Browse",
                         icon = Icons.Default.Folder,
                         iconTint = Color(0xFF94A3B8),
                         onClick = onFoldersCategoryClick
@@ -889,6 +978,77 @@ fun LibraryScreen(
                 )
             }
         }
+    }
+
+    if (showUrlStreamDialog) {
+        AlertDialog(
+            onDismissRequest = { showUrlStreamDialog = false },
+            containerColor = GobeatsSurfaceElevated,
+            title = {
+                Text(
+                    text = "Open Online Stream / Video",
+                    fontWeight = FontWeight.Bold,
+                    color = GobeatsTextPrimary
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter direct HTTP/HTTPS audio, video (.mp4, .mkv), or HLS (.m3u8) stream URL.",
+                        fontSize = 12.sp,
+                        color = GobeatsTextMuted
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = streamUrlInput,
+                        onValueChange = { streamUrlInput = it },
+                        label = { Text("Stream URL (http:// or https://)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GobeatsAmber,
+                            unfocusedBorderColor = GobeatsBorderSubtle,
+                            focusedTextColor = GobeatsTextPrimary,
+                            unfocusedTextColor = GobeatsTextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val clean = streamUrlInput.trim()
+                        if (clean.startsWith("http://", true) || clean.startsWith("https://", true)) {
+                            val streamName = clean.substringBefore('?').substringAfterLast('/').substringBeforeLast('.').ifBlank { "Online Stream" }
+                            val isVideo = clean.endsWith(".mp4", true) || clean.endsWith(".mkv", true) || clean.endsWith(".webm", true) || clean.endsWith(".m3u8", true)
+                            val streamTrack = Track(
+                                id = "stream_" + clean.hashCode().toUInt().toString(16),
+                                title = streamName,
+                                artistName = "Internet Stream",
+                                albumTitle = "Online Streams",
+                                durationMs = 0L,
+                                format = if (isVideo) "MP4" else "STREAM",
+                                bitrate = 320,
+                                sampleRate = 44100,
+                                fileUri = clean,
+                                sourceId = "source_internet",
+                                isVideo = isVideo
+                            )
+                            showUrlStreamDialog = false
+                            streamUrlInput = ""
+                            onTrackClick(streamTrack, listOf(streamTrack))
+                        }
+                    }
+                ) {
+                    Text("Play", color = GobeatsAmber, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUrlStreamDialog = false }) {
+                    Text("Cancel", color = GobeatsTextMuted)
+                }
+            }
+        )
     }
 }
 

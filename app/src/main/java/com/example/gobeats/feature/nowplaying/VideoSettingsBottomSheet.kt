@@ -1,5 +1,8 @@
 package com.example.gobeats.feature.nowplaying
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Speed
@@ -72,7 +76,8 @@ private enum class VideoSettingsSubMenu {
     SPEED,
     AUDIO,
     SUBTITLES,
-    ASPECT_RATIO
+    ASPECT_RATIO,
+    LOUDNESS_BOOST
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,10 +92,20 @@ fun VideoSettingsBottomSheet(
     onSelectAspectMode: (VideoAspectMode) -> Unit,
     onToggleLoop: () -> Unit,
     onToggleStatsForNerds: () -> Unit,
-    onOpenSleepTimer: () -> Unit
+    onOpenSleepTimer: () -> Unit,
+    onSelectLoudnessBoost: (Int) -> Unit = {},
+    onPickExternalSubtitle: (Uri) -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var currentSubMenu by remember { mutableStateOf(VideoSettingsSubMenu.MAIN) }
+
+    val subtitleFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onPickExternalSubtitle(uri)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -126,6 +141,7 @@ fun VideoSettingsBottomSheet(
                         VideoSettingsSubMenu.AUDIO -> "Audio Track"
                         VideoSettingsSubMenu.SUBTITLES -> "Subtitles / Captions"
                         VideoSettingsSubMenu.ASPECT_RATIO -> "Aspect Ratio"
+                        VideoSettingsSubMenu.LOUDNESS_BOOST -> "Volume Booster (Loudness)"
                     },
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
@@ -174,6 +190,15 @@ fun VideoSettingsBottomSheet(
                                 title = "Audio track",
                                 subtitle = activeAudio,
                                 onClick = { currentSubMenu = VideoSettingsSubMenu.AUDIO }
+                            )
+
+                            // 4. Volume Booster (Loudness Booster)
+                            val boostLabel = if (state.videoLoudnessBoostPercent > 100) "${state.videoLoudnessBoostPercent}% [Boost Active]" else "100% (Normal)"
+                            SettingRow(
+                                icon = Icons.AutoMirrored.Filled.VolumeUp,
+                                title = "Volume booster",
+                                subtitle = boostLabel,
+                                onClick = { currentSubMenu = VideoSettingsSubMenu.LOUDNESS_BOOST }
                             )
 
                             // 4. Subtitles
@@ -233,6 +258,21 @@ fun VideoSettingsBottomSheet(
 
                     VideoSettingsSubMenu.QUALITY -> {
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            if (state.isSingleRenditionLocalFile) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0x26FF9800),
+                                    border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.4f)),
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "Single-rendition local offline file — downscaling disabled to prevent black screen",
+                                        fontSize = 12.sp,
+                                        color = GobeatsAmber,
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
                             if (state.videoQualityOptions.isEmpty()) {
                                 Text(
                                     text = "Auto (Original Quality)",
@@ -305,6 +345,17 @@ fun VideoSettingsBottomSheet(
                     VideoSettingsSubMenu.SUBTITLES -> {
                         Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                             SelectableOptionRow(
+                                title = "Load external subtitle (.srt / .vtt)...",
+                                subtitle = "Pick from device storage",
+                                badge = "CUSTOM",
+                                isSelected = false,
+                                onClick = {
+                                    subtitleFilePicker.launch(arrayOf("*/*", "application/x-subrip", "text/vtt", "text/plain"))
+                                    currentSubMenu = VideoSettingsSubMenu.MAIN
+                                }
+                            )
+
+                            SelectableOptionRow(
                                 title = "Off",
                                 subtitle = null,
                                 isSelected = state.selectedSubtitleTrackIndex == -1,
@@ -321,6 +372,30 @@ fun VideoSettingsBottomSheet(
                                     isSelected = state.selectedSubtitleTrackIndex == index,
                                     onClick = {
                                         onSelectSubtitleTrack(index)
+                                        currentSubMenu = VideoSettingsSubMenu.MAIN
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    VideoSettingsSubMenu.LOUDNESS_BOOST -> {
+                        val boostPresets = listOf(
+                            100 to "100% (Standard Max Volume)",
+                            125 to "125% (+3.7 dB Dialogue Boost)",
+                            150 to "150% (+7.5 dB Loudness Boost)",
+                            175 to "175% (+11.2 dB High Gain)",
+                            200 to "200% (+15.0 dB Maximum Booster)"
+                        )
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            boostPresets.forEach { (pct, desc) ->
+                                SelectableOptionRow(
+                                    title = desc,
+                                    subtitle = if (pct > 100) "Hardware dynamic compressor & limiter active" else "Standard hardware audio stream",
+                                    badge = if (pct == 100) "DEFAULT" else if (pct == 200) "MAX BOOST" else null,
+                                    isSelected = state.videoLoudnessBoostPercent == pct,
+                                    onClick = {
+                                        onSelectLoudnessBoost(pct)
                                         currentSubMenu = VideoSettingsSubMenu.MAIN
                                     }
                                 )

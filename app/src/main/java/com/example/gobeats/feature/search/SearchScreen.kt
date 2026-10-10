@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -96,17 +97,39 @@ fun SearchScreen(
     var allTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     var allAlbums by remember { mutableStateOf<List<Album>>(emptyList()) }
     var allArtists by remember { mutableStateOf<List<Artist>>(emptyList()) }
+    var allPlaylists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var selectedFilterIndex by remember { mutableIntStateOf(0) }
-    val filters = listOf("All", "Songs", "Albums", "Artists", "Playlists", "Genres")
+    val filters = listOf("All", "Songs", "Videos", "Albums", "Artists", "Playlists", "Genres")
 
+    val prefs = remember { context.getSharedPreferences("gobeats_search_history", Context.MODE_PRIVATE) }
     val recentSearches = remember {
-        mutableStateListOf("arijit singh", "coldplay", "lofi", "ted lasso", "ap dhillon")
+        mutableStateListOf<String>().apply {
+            val saved = prefs.getString("history", null)?.split("||")?.filter { it.isNotBlank() } ?: emptyList()
+            addAll(saved)
+        }
+    }
+
+    fun saveRecentSearch(term: String) {
+        val trimmed = term.trim()
+        if (trimmed.length < 2) return
+        recentSearches.remove(trimmed)
+        recentSearches.add(0, trimmed)
+        while (recentSearches.size > 8) {
+            recentSearches.removeAt(recentSearches.lastIndex)
+        }
+        prefs.edit().putString("history", recentSearches.joinToString("||")).apply()
+    }
+
+    fun clearRecentSearches() {
+        recentSearches.clear()
+        prefs.edit().remove("history").apply()
     }
 
     LaunchedEffect(Unit) {
         allTracks = libraryRepository.getAllTracks()
         allAlbums = libraryRepository.getAllAlbums()
         allArtists = libraryRepository.getAllArtists()
+        allPlaylists = libraryRepository.getAllPlaylists()
     }
 
     LaunchedEffect(searchQuery) {
@@ -203,7 +226,7 @@ fun SearchScreen(
                     decorationBox = { innerTextField ->
                         if (searchQuery.isEmpty()) {
                             Text(
-                                text = "Search songs, artists, albums, playlists...",
+                                text = "Search songs, videos, artists, albums, playlists...",
                                 fontSize = 13.sp,
                                 color = GobeatsTextMuted
                             )
@@ -228,7 +251,7 @@ fun SearchScreen(
             }
         }
 
-        // Filter Chips (All, Songs, Albums, Artists, Playlists, Genres)
+        // Filter Chips (All, Songs, Videos, Albums, Artists, Playlists, Genres)
         Spacer(modifier = Modifier.height(10.dp))
         LazyRow(
             contentPadding = PaddingValues(horizontal = 20.dp),
@@ -278,7 +301,7 @@ fun SearchScreen(
                             text = "Clear all",
                             fontSize = 12.sp,
                             color = GobeatsTextMuted,
-                            modifier = Modifier.clickable { recentSearches.clear() }
+                            modifier = Modifier.clickable { clearRecentSearches() }
                         )
                     }
 
@@ -336,16 +359,70 @@ fun SearchScreen(
             if (searchQuery.isNotEmpty()) {
                 val q = searchQuery.trim().lowercase()
 
+                // Direct HTTP/HTTPS Stream URL result
+                if (q.startsWith("http://") || q.startsWith("https://")) {
+                    item {
+                        val cleanUrl = searchQuery.trim()
+                        val streamName = cleanUrl.substringBefore('?').substringAfterLast('/').substringBeforeLast('.').ifBlank { "Online Stream" }
+                        val isVideo = cleanUrl.endsWith(".mp4", true) || cleanUrl.endsWith(".mkv", true) || cleanUrl.endsWith(".webm", true) || cleanUrl.endsWith(".m3u8", true)
+                        SearchResultRow(
+                            title = "Play Stream: $streamName",
+                            subtitle = cleanUrl,
+                            badge = if (isVideo) "Online Video" else "Online Stream",
+                            isCircular = false,
+                            onClick = {
+                                saveRecentSearch(cleanUrl)
+                                val streamTrack = Track(
+                                    id = "stream_" + cleanUrl.hashCode().toUInt().toString(16),
+                                    sourceId = "source_internet",
+                                    fileUri = cleanUrl,
+                                    title = streamName,
+                                    artistName = "Internet Stream",
+                                    albumTitle = "Online Streams",
+                                    durationMs = 0L,
+                                    format = if (isVideo) "MP4" else "STREAM",
+                                    bitrate = 320,
+                                    sampleRate = 44100,
+                                    isVideo = isVideo
+                                )
+                                onTrackClick(streamTrack, listOf(streamTrack))
+                            }
+                        )
+                    }
+                }
+
                 // Filter matching items based on chip
-                val songResults = if (activeFilter in listOf("All", "Songs")) searchResults else emptyList()
+                val songResults = if (activeFilter in listOf("All", "Songs")) {
+                    searchResults.filter { !it.isVideo }
+                } else emptyList()
+
+                val videoResults = if (activeFilter in listOf("All", "Videos")) {
+                    (searchResults.filter { it.isVideo } +
+                        allTracks.filter { it.isVideo && (it.title.lowercase().contains(q) || it.artistName.lowercase().contains(q)) }
+                    ).distinctBy { it.id }
+                } else emptyList()
+
                 val albumResults = if (activeFilter in listOf("All", "Albums")) {
                     allAlbums.filter { it.title.lowercase().contains(q) || it.artistName.lowercase().contains(q) }
                 } else emptyList()
+
                 val artistResults = if (activeFilter in listOf("All", "Artists")) {
                     allArtists.filter { it.name.lowercase().contains(q) }
                 } else emptyList()
 
-                val hasAnyResults = songResults.isNotEmpty() || albumResults.isNotEmpty() || artistResults.isNotEmpty()
+                val playlistResults = if (activeFilter in listOf("All", "Playlists")) {
+                    allPlaylists.filter { it.name.lowercase().contains(q) || it.description?.lowercase()?.contains(q) == true }
+                } else emptyList()
+
+                val allGenres = allTracks.mapNotNull { it.genre?.takeIf { g -> g.isNotBlank() && g != "Unknown" } }.distinct()
+                val genreResults = if (activeFilter in listOf("All", "Genres")) {
+                    allGenres.filter { it.lowercase().contains(q) }
+                } else emptyList()
+
+                val hasAnyResults = songResults.isNotEmpty() || videoResults.isNotEmpty() ||
+                    albumResults.isNotEmpty() || artistResults.isNotEmpty() ||
+                    playlistResults.isNotEmpty() || genreResults.isNotEmpty() ||
+                    q.startsWith("http://") || q.startsWith("https://")
 
                 if (!hasAnyResults) {
                     item {
@@ -370,7 +447,10 @@ fun SearchScreen(
                             subtitle = "Artist • ${artist.trackCount} songs",
                             badge = "Artist",
                             isCircular = true,
-                            onClick = { onArtistClick(artist) }
+                            onClick = {
+                                saveRecentSearch(artist.name)
+                                onArtistClick(artist)
+                            }
                         )
                     }
 
@@ -381,7 +461,56 @@ fun SearchScreen(
                             subtitle = "${album.artistName} • ${album.trackCount} songs",
                             badge = "Album",
                             isCircular = false,
-                            onClick = { onAlbumClick(album) }
+                            onClick = {
+                                saveRecentSearch(album.title)
+                                onAlbumClick(album)
+                            }
+                        )
+                    }
+
+                    // Display Playlists
+                    items(playlistResults) { playlist ->
+                        SearchResultRow(
+                            title = playlist.name,
+                            subtitle = "Playlist • ${playlist.trackCount} tracks",
+                            badge = "Playlist",
+                            isCircular = false,
+                            onClick = {
+                                saveRecentSearch(playlist.name)
+                                onPlaylistClick(playlist)
+                            }
+                        )
+                    }
+
+                    // Display Genres
+                    items(genreResults) { genre ->
+                        val count = allTracks.count { it.genre.equals(genre, true) }
+                        SearchResultRow(
+                            title = genre,
+                            subtitle = "Genre • $count tracks",
+                            badge = "Genre",
+                            isCircular = false,
+                            onClick = {
+                                searchQuery = genre
+                                saveRecentSearch(genre)
+                            }
+                        )
+                    }
+
+                    // Display Videos
+                    items(videoResults) { video ->
+                        SearchResultRow(
+                            title = video.title,
+                            subtitle = "${video.artistName} • ${formatDuration(video.durationMs)}",
+                            badge = "Video",
+                            isCircular = false,
+                            onClick = {
+                                saveRecentSearch(video.title)
+                                onTrackClick(video, videoResults)
+                            },
+                            onPlayNext = { onPlayNext(video) },
+                            onAddToQueue = { onAddToQueue(video) },
+                            onShare = { shareSong(context, video) }
                         )
                     }
 
@@ -390,9 +519,12 @@ fun SearchScreen(
                         SearchResultRow(
                             title = track.title,
                             subtitle = "${track.artistName} • ${formatDuration(track.durationMs)}",
-                            badge = "Song",
+                            badge = if (track.isVideo) "Video" else "Song",
                             isCircular = false,
-                            onClick = { onTrackClick(track, songResults) },
+                            onClick = {
+                                saveRecentSearch(track.title)
+                                onTrackClick(track, songResults)
+                            },
                             onPlayNext = { onPlayNext(track) },
                             onAddToQueue = { onAddToQueue(track) },
                             onShare = { shareSong(context, track) }
@@ -401,9 +533,16 @@ fun SearchScreen(
                 }
             } else {
                 // When search query is empty, show user's real library tracks, albums, and artists
+                val allVideos = allTracks.filter { it.isVideo }
+                val displayVideos = when (activeFilter) {
+                    "Videos" -> allVideos
+                    "All" -> allVideos.take(3)
+                    else -> emptyList()
+                }
+
                 val displayTracks = when (activeFilter) {
-                    "Songs" -> allTracks
-                    "All" -> allTracks.take(8)
+                    "Songs" -> allTracks.filter { !it.isVideo }
+                    "All" -> allTracks.filter { !it.isVideo }.take(8)
                     else -> emptyList()
                 }
 
@@ -416,6 +555,19 @@ fun SearchScreen(
                 val displayArtists = when (activeFilter) {
                     "Artists" -> allArtists
                     "All" -> allArtists.take(4)
+                    else -> emptyList()
+                }
+
+                val displayPlaylists = when (activeFilter) {
+                    "Playlists" -> allPlaylists
+                    "All" -> allPlaylists.take(3)
+                    else -> emptyList()
+                }
+
+                val allGenres = allTracks.mapNotNull { it.genre?.takeIf { g -> g.isNotBlank() && g != "Unknown" } }.distinct()
+                val displayGenres = when (activeFilter) {
+                    "Genres" -> allGenres
+                    "All" -> allGenres.take(3)
                     else -> emptyList()
                 }
 
@@ -441,6 +593,43 @@ fun SearchScreen(
                     )
                 }
 
+                // Render Playlists
+                items(displayPlaylists) { pl ->
+                    SearchResultRow(
+                        title = pl.name,
+                        subtitle = "Playlist • ${pl.trackCount} tracks",
+                        badge = "Playlist",
+                        isCircular = false,
+                        onClick = { onPlaylistClick(pl) }
+                    )
+                }
+
+                // Render Genres
+                items(displayGenres) { genre ->
+                    val count = allTracks.count { it.genre.equals(genre, true) }
+                    SearchResultRow(
+                        title = genre,
+                        subtitle = "Genre • $count tracks",
+                        badge = "Genre",
+                        isCircular = false,
+                        onClick = { searchQuery = genre }
+                    )
+                }
+
+                // Render Videos
+                items(displayVideos) { video ->
+                    SearchResultRow(
+                        title = video.title,
+                        subtitle = "${video.artistName} • ${formatDuration(video.durationMs)}",
+                        badge = "Video",
+                        isCircular = false,
+                        onClick = { onTrackClick(video, allVideos) },
+                        onPlayNext = { onPlayNext(video) },
+                        onAddToQueue = { onAddToQueue(video) },
+                        onShare = { shareSong(context, video) }
+                    )
+                }
+
                 // Render songs
                 items(displayTracks) { track ->
                     SearchResultRow(
@@ -455,7 +644,7 @@ fun SearchScreen(
                     )
                 }
 
-                if (displayTracks.isEmpty() && displayAlbums.isEmpty() && displayArtists.isEmpty()) {
+                if (displayTracks.isEmpty() && displayVideos.isEmpty() && displayAlbums.isEmpty() && displayArtists.isEmpty() && displayPlaylists.isEmpty()) {
                     item {
                         Box(
                             modifier = Modifier
@@ -464,7 +653,7 @@ fun SearchScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Start typing above to search your entire music collection",
+                                text = "Start typing above or paste a stream link to search",
                                 fontSize = 13.sp,
                                 color = GobeatsTextMuted
                             )

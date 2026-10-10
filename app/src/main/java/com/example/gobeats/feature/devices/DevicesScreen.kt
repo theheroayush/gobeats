@@ -154,7 +154,7 @@ fun DevicesScreen(
                     // White pill Connect Device button (matching mockup)
                     Surface(
                         modifier = Modifier.clickable {
-                            syncServer?.startServer()
+                            com.example.gobeats.core.sync.GobeatsSyncService.start(context)
                             showConnectModal = true
                         },
                         shape = RoundedCornerShape(20.dp),
@@ -238,7 +238,7 @@ fun DevicesScreen(
                             // White pill Connect Your Computer CTA
                             Surface(
                                 modifier = Modifier.clickable {
-                                    syncServer?.startServer()
+                                    com.example.gobeats.core.sync.GobeatsSyncService.start(context)
                                     showConnectModal = true
                                 },
                                 shape = RoundedCornerShape(20.dp),
@@ -756,8 +756,17 @@ fun DevicesScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showConnectModal = false }) {
-                    Text("Done", color = GobeatsAmber, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        com.example.gobeats.core.sync.GobeatsSyncService.stop(context)
+                        showConnectModal = false
+                    }) {
+                        Text("Stop Server", color = Color(0xFFEF4444), fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    TextButton(onClick = { showConnectModal = false }) {
+                        Text("Done", color = GobeatsAmber, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         )

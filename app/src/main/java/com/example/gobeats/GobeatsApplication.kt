@@ -32,6 +32,8 @@ class GobeatsApplication : Application() {
         private set
     lateinit var lyricsRepository: com.example.gobeats.core.lyrics.LyricsRepository
         private set
+    lateinit var folderBrowserRepository: com.example.gobeats.feature.library.folders.FolderBrowserRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -47,6 +49,7 @@ class GobeatsApplication : Application() {
         syncServer = com.example.gobeats.core.sync.GobeatsSyncServer(this, dbHelper)
         sleepTimerManager = com.example.gobeats.core.audio.SleepTimerManager()
         lyricsRepository = com.example.gobeats.core.lyrics.LyricsRepository(this)
+        folderBrowserRepository = com.example.gobeats.feature.library.folders.FolderBrowserRepository(this, dbHelper)
 
         playbackConnection.onTrackEndedListener = {
             sleepTimerManager.notifyTrackEnded()

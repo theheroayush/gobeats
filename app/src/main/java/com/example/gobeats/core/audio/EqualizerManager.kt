@@ -339,6 +339,29 @@ class EqualizerManager(private val context: Context) {
         _state.value = _state.value.copy(loudnessGainMb = clamped)
     }
 
+    private var videoBoostGainMb: Int = 0
+
+    fun setVideoLoudnessBoostGainMb(gainMb: Int) {
+        val clamped = gainMb.coerceIn(0, 1500)
+        videoBoostGainMb = clamped
+        try {
+            if (clamped > 0) {
+                loudnessEnhancer?.enabled = true
+                loudnessEnhancer?.setTargetGain(clamped)
+            } else {
+                if (_state.value.isLoudnessEnabled) {
+                    loudnessEnhancer?.enabled = true
+                    loudnessEnhancer?.setTargetGain(_state.value.loudnessGainMb)
+                } else {
+                    loudnessEnhancer?.enabled = false
+                    loudnessEnhancer?.setTargetGain(0)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun getVideoLoudnessBoostGainMb(): Int = videoBoostGainMb
+
     fun release() {
         try {
             equalizer?.release()

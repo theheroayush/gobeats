@@ -445,7 +445,12 @@ fun NowPlayingBottomSheet(
                     onPinchZoomIn = { playbackRepository?.setVideoAspectMode(VideoAspectMode.FILL_CROP) },
                     onPinchZoomOut = { playbackRepository?.setVideoAspectMode(VideoAspectMode.FIT) },
                     onSetTouchLocked = { playbackRepository?.setTouchLocked(it) },
-                    onCloseStats = { playbackRepository?.toggleStatsForNerds() }
+                    onCloseStats = { playbackRepository?.toggleStatsForNerds() },
+                    videoLoudnessBoostPercent = state.videoLoudnessBoostPercent,
+                    resumePrompt = state.resumePrompt,
+                    onVideoLoudnessBoostChange = { playbackRepository?.setVideoLoudnessBoost(it) },
+                    onResumeSavedPosition = { playbackRepository?.resumeFromSavedPosition() },
+                    onDismissResumePrompt = { playbackRepository?.dismissResumePrompt() }
                 )
             } else {
                 ArtworkCarousel(
@@ -984,7 +989,9 @@ fun NowPlayingBottomSheet(
             onSelectAspectMode = { playbackRepository?.setVideoAspectMode(it) },
             onToggleLoop = { playbackRepository?.toggleVideoLoop() },
             onToggleStatsForNerds = { playbackRepository?.toggleStatsForNerds() },
-            onOpenSleepTimer = { showSleepTimerDialog = true }
+            onOpenSleepTimer = { showSleepTimerDialog = true },
+            onSelectLoudnessBoost = { playbackRepository?.setVideoLoudnessBoost(it) },
+            onPickExternalSubtitle = { playbackRepository?.addExternalSubtitle(it) }
         )
     }
 }

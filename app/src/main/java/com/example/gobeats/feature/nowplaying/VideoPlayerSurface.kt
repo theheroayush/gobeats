@@ -6,6 +6,7 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,12 +25,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.example.gobeats.core.designsystem.components.formatDuration
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -84,7 +88,12 @@ fun VideoPlayerSurface(
     onPinchZoomIn: () -> Unit = {},
     onPinchZoomOut: () -> Unit = {},
     onSetTouchLocked: (Boolean) -> Unit = {},
-    onCloseStats: () -> Unit = {}
+    onCloseStats: () -> Unit = {},
+    videoLoudnessBoostPercent: Int = 100,
+    resumePrompt: com.example.gobeats.core.model.VideoResumePrompt? = null,
+    onVideoLoudnessBoostChange: (Int) -> Unit = {},
+    onResumeSavedPosition: () -> Unit = {},
+    onDismissResumePrompt: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(20.dp)
@@ -176,6 +185,7 @@ fun VideoPlayerSurface(
             isTouchLocked = isTouchLocked,
             isFullscreenCinema = false,
             is2xSpeedActive = is2xSpeedActive,
+            videoLoudnessBoostPercent = videoLoudnessBoostPercent,
             onSeek = onSeek,
             onDoubleTapLeft = onDoubleTapLeft,
             onDoubleTapRight = onDoubleTapRight,
@@ -190,6 +200,7 @@ fun VideoPlayerSurface(
             onPinchZoomOut = onPinchZoomOut,
             onSwipeUpFullscreen = onToggleFullscreen,
             onUnlockTouch = { onSetTouchLocked(false) },
+            onVideoLoudnessBoostChange = onVideoLoudnessBoostChange,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -313,6 +324,60 @@ fun VideoPlayerSurface(
                                 modifier = Modifier
                                     .padding(6.dp)
                                     .size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resume Playback Prompt Banner Overlay
+        resumePrompt?.let { prompt ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 16.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xF2121118),
+                    border = BorderStroke(1.dp, GobeatsAmber.copy(alpha = 0.8f)),
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Resume from ${formatDuration(prompt.positionMs)}?",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = GobeatsAmber,
+                            modifier = Modifier.clickable { onResumeSavedPosition() }
+                        ) {
+                            Text(
+                                text = "Resume",
+                                color = Color.Black,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        IconButton(
+                            onClick = onDismissResumePrompt,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = Color(0xFFA1A1AA),
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }

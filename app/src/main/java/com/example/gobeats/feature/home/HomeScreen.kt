@@ -151,84 +151,91 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             val continueTracks = (recentlyPlayed.ifEmpty { recentlyAdded }).take(6)
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                items(continueTracks) { track ->
-                    ContinueListeningCard(
-                        track = track,
-                        isPlaying = playbackState.currentTrack?.id == track.id && playbackState.isPlaying,
-                        onClick = { onTrackClick(track, continueTracks) },
-                        onPlayNext = { onPlayNext(track) },
-                        onAddToQueue = { onAddToQueue(track) },
-                        onEditTags = { onEditTags(track) }
+            if (continueTracks.isNotEmpty()) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(continueTracks) { track ->
+                        val isCurrent = playbackState.currentTrack?.id == track.id
+                        val currentProgress = if (isCurrent && track.durationMs > 0) {
+                            (playbackState.currentPositionMs.toFloat() / track.durationMs).coerceIn(0f, 1f)
+                        } else 0f
+
+                        ContinueListeningCard(
+                            track = track,
+                            isPlaying = isCurrent && playbackState.isPlaying,
+                            progress = currentProgress,
+                            onClick = { onTrackClick(track, continueTracks) },
+                            onPlayNext = { onPlayNext(track) },
+                            onAddToQueue = { onAddToQueue(track) },
+                            onEditTags = { onEditTags(track) }
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = GobeatsSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle)
+                ) {
+                    Text(
+                        text = "Scan or transfer music to start listening.",
+                        fontSize = 13.sp,
+                        color = GobeatsTextMuted,
+                        modifier = Modifier.padding(16.dp)
                     )
                 }
             }
         }
 
         // Section: Recently played (Circular Artist Avatars)
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
-            SectionHeaderWithSeeAll(
-                title = "Recently played",
-                onSeeAllClick = onSeeAllRecentlyPlayed
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            val displayArtists = artists.ifEmpty {
-                listOf(
-                    Artist("a1", "Billie Eilish"),
-                    Artist("a2", "Frank Ocean"),
-                    Artist("a3", "Radiohead"),
-                    Artist("a4", "Tyler, The Creator"),
-                    Artist("a5", "SZA"),
-                    Artist("a6", "Coldplay")
+        if (artists.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                SectionHeaderWithSeeAll(
+                    title = "Recently played",
+                    onSeeAllClick = onSeeAllRecentlyPlayed
                 )
-            }
+                Spacer(modifier = Modifier.height(14.dp))
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                items(displayArtists) { artist ->
-                    ArtistAvatarItem(
-                        artist = artist,
-                        onClick = { onArtistClick(artist) }
-                    )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    items(artists.take(8)) { artist ->
+                        ArtistAvatarItem(
+                            artist = artist,
+                            onClick = { onArtistClick(artist) }
+                        )
+                    }
                 }
             }
         }
 
         // Section: Recently added (Album Covers)
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
-            SectionHeaderWithSeeAll(
-                title = "Recently added",
-                onSeeAllClick = onSeeAllRecentlyAdded
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            val displayAlbums = albums.ifEmpty {
-                listOf(
-                    Album("alb1", "Charm", null, "Clairo", 2024),
-                    Album("alb2", "HIT ME HARD AND SOFT", null, "Billie Eilish", 2024),
-                    Album("alb3", "Lost and Found", null, "FKJ", 2024),
-                    Album("alb4", "The Slow Rush", null, "Tame Impala", 2020),
-                    Album("alb5", "GUTS", null, "Olivia Rodrigo", 2023)
+        if (albums.isNotEmpty()) {
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                SectionHeaderWithSeeAll(
+                    title = "Recently added",
+                    onSeeAllClick = onSeeAllRecentlyAdded
                 )
-            }
+                Spacer(modifier = Modifier.height(14.dp))
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                items(displayAlbums) { album ->
-                    RecentlyAddedAlbumCard(
-                        album = album,
-                        onClick = { onAlbumClick(album) }
-                    )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(albums.take(8)) { album ->
+                        RecentlyAddedAlbumCard(
+                            album = album,
+                            onClick = { onAlbumClick(album) }
+                        )
+                    }
                 }
             }
         }
@@ -277,6 +284,7 @@ private fun SectionHeaderWithSeeAll(
 private fun ContinueListeningCard(
     track: Track,
     isPlaying: Boolean,
+    progress: Float = 0f,
     onClick: () -> Unit,
     onPlayNext: () -> Unit = {},
     onAddToQueue: () -> Unit = {},
@@ -323,15 +331,17 @@ private fun ContinueListeningCard(
             }
 
             // Bottom progress bar indicator
-            LinearProgressIndicator(
-                progress = { 0.45f },
-                color = GobeatsAmber,
-                trackColor = Color.Transparent,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .align(Alignment.BottomCenter)
-            )
+            if (progress > 0f) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    color = GobeatsAmber,
+                    trackColor = Color.Transparent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .align(Alignment.BottomCenter)
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))

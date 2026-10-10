@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import com.example.gobeats.core.media.tag.ScopedStorageRouter
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -21,7 +22,8 @@ data class TagEditPayload(
     val genre: String? = null,
     val trackNumber: Int? = null,
     val artworkUri: String? = null,
-    val newArtworkBytes: ByteArray? = null
+    val newArtworkBytes: ByteArray? = null,
+    val removeArtwork: Boolean = false
 )
 
 object Id3TagWriter {
@@ -205,12 +207,8 @@ object Id3TagWriter {
                 }
             }
 
-            if (file.delete()) {
-                tempFile.renameTo(file)
-            } else {
-                false
-            }
-        } catch (e: Exception) {
+            ScopedStorageRouter.safeAtomicReplace(targetFile = file, stagingFile = tempFile)
+        } catch (_: Exception) {
             tempFile.delete()
             false
         }

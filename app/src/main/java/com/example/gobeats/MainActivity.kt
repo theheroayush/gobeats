@@ -10,6 +10,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import com.example.gobeats.core.playlist.PlaylistImporter
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Devices
@@ -61,6 +70,7 @@ import com.example.gobeats.feature.library.TagEditorBottomSheet
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.compose.ui.platform.LocalConfiguration
+import com.example.gobeats.feature.nowplaying.FloatingVideoMiniplayer
 import com.example.gobeats.feature.nowplaying.FullscreenVideoPlayer
 import com.example.gobeats.feature.nowplaying.NowPlayingBottomSheet
 import com.example.gobeats.feature.nowplaying.VideoSettingsBottomSheet
@@ -98,6 +108,7 @@ sealed class Destination {
     data class AlbumDetail(val album: Album) : Destination()
     data class ArtistDetail(val artist: Artist) : Destination()
     data class PlaylistDetail(val playlist: Playlist) : Destination()
+    data class Folders(val initialPath: String? = null) : Destination()
 }
 
 class MainActivity : ComponentActivity() {
@@ -203,10 +214,44 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    val isVid = (action == Intent.ACTION_VIEW && intent.type?.startsWith("video/") == true) ||
-                            displayName.endsWith(".mp4", ignoreCase = true) ||
-                            displayName.endsWith(".mkv", ignoreCase = true) ||
-                            displayName.endsWith(".webm", ignoreCase = true)
+                    val mimeType = intent.type ?: contentResolver.getType(uri)
+                    val isVid = (action == Intent.ACTION_VIEW && mimeType?.startsWith("video/") == true) ||
+                        MetadataExtractor.isVideoExtensionOrMime(displayName, mimeType)
+
+                    if (displayName.endsWith(".m3u", true) || displayName.endsWith(".m3u8", true) || displayName.endsWith(".csv", true)) {
+                        val baseName = displayName.substringBeforeLast('.').ifBlank { "External Playlist" }
+                        val (parsedName, entries) = try {
+                            contentResolver.openInputStream(uri)?.use { stream ->
+                                PlaylistImporter.parseStream(stream, baseName)
+                            } ?: Pair(baseName, emptyList())
+                        } catch (_: Exception) {
+                            Pair(baseName, emptyList())
+                        }
+
+                        if (entries.isNotEmpty()) {
+                            val libraryTracks = app.libraryRepository.getAllTracks()
+                            val matchRes = PlaylistImporter.matchTracks(entries, libraryTracks, parsedName)
+                            matchRes.streamTracks.forEach { st ->
+                                app.libraryRepository.insertOrUpdateTrack(st)
+                            }
+                            val created = app.playlistRepository.createPlaylist(
+                                matchRes.playlistName,
+                                "Opened from File Explorer (${matchRes.totalPlayableTracks.size} tracks)"
+                            )
+                            matchRes.totalPlayableTracks.forEach { t ->
+                                app.playlistRepository.addTrack(created.id, t)
+                            }
+
+                            withContext(Dispatchers.Main) {
+                                if (matchRes.totalPlayableTracks.isNotEmpty()) {
+                                    val firstTrack = matchRes.totalPlayableTracks.first()
+                                    app.playbackRepository.playTrack(firstTrack, matchRes.totalPlayableTracks)
+                                    incomingTrackFlow.value = firstTrack
+                                }
+                            }
+                            return@launch
+                        }
+                    }
 
                     val track = MetadataExtractor.extractMetadata(
                         context = this@MainActivity,
@@ -248,6 +293,22 @@ fun GobeatsApp(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val playbackState by app.playbackRepository.playbackState.collectAsState()
+
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isCinemaActive = playbackState.isVideoMode && playbackState.currentTrack?.isVideo == true && (playbackState.isFullscreenCinema || isLandscape)
+
+    var isFloatingMiniplayerDismissed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(playbackState.currentTrack?.id) {
+        isFloatingMiniplayerDismissed = false
+    }
+
+    val showFloatingMiniplayer = playbackState.isVideoMode &&
+        playbackState.currentTrack?.isVideo == true &&
+        !showNowPlayingSheet &&
+        !isCinemaActive &&
+        !isFloatingMiniplayerDismissed
 
     var allTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
     var allVideos by remember { mutableStateOf<List<Track>>(emptyList()) }
@@ -369,12 +430,28 @@ fun GobeatsApp(
                     }
                 )
             }
+            is Destination.Folders -> {
+                com.example.gobeats.feature.library.folders.FoldersScreen(
+                    initialPath = dest.initialPath,
+                    folderBrowserRepository = app.folderBrowserRepository,
+                    playbackRepository = app.playbackRepository,
+                    libraryRepository = app.libraryRepository,
+                    onBack = { navStack.removeAt(navStack.lastIndex) },
+                    onTrackClick = { track, queue ->
+                        app.playbackRepository.playTrack(track, queue)
+                        if (track.isVideo) showNowPlayingSheet = true
+                    },
+                    onEditTags = { track -> trackToEdit = track },
+                    onSearchClick = { navStack.add(Destination.Search) }
+                )
+            }
             is Destination.Search -> {
                 SearchScreen(
                     libraryRepository = app.libraryRepository,
                     playbackState = playbackState,
                     onTrackClick = { track, queue ->
                         app.playbackRepository.playTrack(track, queue)
+                        if (track.isVideo) showNowPlayingSheet = true
                     },
                     onAlbumClick = { album ->
                         navStack.add(Destination.AlbumDetail(album))
@@ -404,7 +481,9 @@ fun GobeatsApp(
                     },
                     onSearchClick = { navStack.add(Destination.Search) },
                     sleepTimerManager = app.sleepTimerManager,
-                    playbackRepository = app.playbackRepository
+                    playbackRepository = app.playbackRepository,
+                    dbHelper = app.dbHelper,
+                    onLibraryRefresh = { refreshLibrary() }
                 )
             }
             is Destination.Queue -> {
@@ -522,7 +601,11 @@ fun GobeatsApp(
                                 .background(GobeatsObsidian)
                                 .navigationBarsPadding()
                         ) {
-                            if (playbackState.currentTrack != null) {
+                            AnimatedVisibility(
+                                visible = playbackState.currentTrack != null && !showFloatingMiniplayer,
+                                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(200)),
+                                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(tween(200))
+                            ) {
                                 MiniPlayerBar(
                                     state = playbackState,
                                     onTogglePlayPause = { app.playbackRepository.togglePlayPause() },
@@ -609,8 +692,15 @@ fun GobeatsApp(
                     }
                 ) { innerPadding ->
                     Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                        when (selectedTab) {
-                            0 -> HomeScreen(
+                        AnimatedContent(
+                            targetState = selectedTab,
+                            transitionSpec = {
+                                fadeIn(animationSpec = tween(180)) togetherWith fadeOut(animationSpec = tween(180))
+                            },
+                            label = "MainAppTabContent"
+                        ) { tab ->
+                            when (tab) {
+                                0 -> HomeScreen(
                                 playbackState = playbackState,
                                 recentlyPlayed = recentlyPlayed,
                                 recentlyAdded = recentlyAdded,
@@ -647,7 +737,7 @@ fun GobeatsApp(
                                 albums = allAlbums,
                                 artists = allArtists,
                                 playlists = allPlaylists,
-                                onFoldersCategoryClick = { navStack.add(Destination.FolderSetup) },
+                                onFoldersCategoryClick = { navStack.add(Destination.Folders()) },
                                 onAlbumClick = { album ->
                                     navStack.add(Destination.AlbumDetail(album))
                                 },
@@ -763,6 +853,7 @@ fun GobeatsApp(
                     }
                 }
             }
+            }
         }
 
         // Now Playing Fullscreen Bottom Sheet
@@ -825,11 +916,21 @@ fun GobeatsApp(
             )
         }
 
-        // Fullscreen Cinema Video Player Overlay
-        val configuration = LocalConfiguration.current
-        val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val isCinemaActive = playbackState.isVideoMode && playbackState.currentTrack?.isVideo == true && (playbackState.isFullscreenCinema || isLandscape)
+        // In-App Floating Video Miniplayer Overlay
+        if (showFloatingMiniplayer) {
+            FloatingVideoMiniplayer(
+                player = app.playbackRepository.getPlayer(),
+                state = playbackState,
+                onExpand = { showNowPlayingSheet = true },
+                onTogglePlayPause = { app.playbackRepository.togglePlayPause() },
+                onClose = {
+                    isFloatingMiniplayerDismissed = true
+                    app.playbackRepository.toggleVideoMode(false)
+                }
+            )
+        }
 
+        // Fullscreen Cinema Video Player Overlay
         if (isCinemaActive) {
             BackHandler {
                 app.playbackRepository.setFullscreenCinema(false)
@@ -872,7 +973,10 @@ fun GobeatsApp(
                     val nextSub = if (playbackState.selectedSubtitleTrackIndex == -1 && playbackState.subtitleTracks.isNotEmpty()) 0 else -1
                     app.playbackRepository.selectSubtitleTrack(nextSub)
                 },
-                onCloseStats = { app.playbackRepository.toggleStatsForNerds() }
+                onCloseStats = { app.playbackRepository.toggleStatsForNerds() },
+                onVideoLoudnessBoostChange = { app.playbackRepository.setVideoLoudnessBoost(it) },
+                onResumeSavedPosition = { app.playbackRepository.resumeFromSavedPosition() },
+                onDismissResumePrompt = { app.playbackRepository.dismissResumePrompt() }
             )
 
             if (showFullscreenSettings) {
@@ -886,7 +990,9 @@ fun GobeatsApp(
                     onSelectAspectMode = { app.playbackRepository.setVideoAspectMode(it) },
                     onToggleLoop = { app.playbackRepository.toggleVideoLoop() },
                     onToggleStatsForNerds = { app.playbackRepository.toggleStatsForNerds() },
-                    onOpenSleepTimer = {}
+                    onOpenSleepTimer = {},
+                    onSelectLoudnessBoost = { app.playbackRepository.setVideoLoudnessBoost(it) },
+                    onPickExternalSubtitle = { app.playbackRepository.addExternalSubtitle(it) }
                 )
             }
         }

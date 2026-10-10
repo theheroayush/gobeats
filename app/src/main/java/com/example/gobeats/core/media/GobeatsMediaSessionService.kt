@@ -29,6 +29,12 @@ import com.example.gobeats.R
 
 class GobeatsMediaSessionService : MediaSessionService() {
 
+    companion object {
+        @Volatile
+        var activePlayer: ExoPlayer? = null
+            private set
+    }
+
     private var mediaSession: MediaSession? = null
     private var exoPlayer: ExoPlayer? = null
     private lateinit var audioManager: AudioManager
@@ -86,6 +92,7 @@ class GobeatsMediaSessionService : MediaSessionService() {
             .build()
 
         exoPlayer = player
+        activePlayer = player
         (application as? com.example.gobeats.GobeatsApplication)?.equalizerManager?.bindAudioSession(player.audioSessionId)
 
         val sessionActivityPendingIntent = PendingIntent.getActivity(
@@ -106,11 +113,31 @@ class GobeatsMediaSessionService : MediaSessionService() {
                         .add(Player.COMMAND_SET_VIDEO_SURFACE)
                         .add(Player.COMMAND_GET_TRACKS)
                         .add(Player.COMMAND_SET_TRACK_SELECTION_PARAMETERS)
+                        .add(Player.COMMAND_SET_VOLUME)
+                        .add(Player.COMMAND_GET_VOLUME)
                         .build()
                     return MediaSession.ConnectionResult.accept(
                         MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS,
                         playerCommands
                     )
+                }
+
+                override fun onAddMediaItems(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                    mediaItems: MutableList<MediaItem>
+                ): com.google.common.util.concurrent.ListenableFuture<MutableList<MediaItem>> {
+                    val updatedMediaItems = mediaItems.map { mediaItem ->
+                        val resolvedUri = mediaItem.localConfiguration?.uri ?: mediaItem.requestMetadata.mediaUri
+                        if (resolvedUri != null) {
+                            mediaItem.buildUpon()
+                                .setUri(resolvedUri)
+                                .build()
+                        } else {
+                            mediaItem
+                        }
+                    }.toMutableList()
+                    return com.google.common.util.concurrent.Futures.immediateFuture(updatedMediaItems)
                 }
             })
             .build()
@@ -126,6 +153,7 @@ class GobeatsMediaSessionService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        activePlayer = null
         mediaSession?.run {
             player.release()
             release()

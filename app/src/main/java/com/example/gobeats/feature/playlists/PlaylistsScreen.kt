@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.MoreVert
@@ -113,6 +114,7 @@ fun PlaylistsScreen(
     var showImportSheet by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
     var newPlaylistDesc by remember { mutableStateOf("") }
+    var playlistSearchQuery by remember { mutableStateOf("") }
     var selectedFilterIndex by remember { mutableIntStateOf(0) }
     val filters = listOf("All", "Yours", "Smart", "Imported")
 
@@ -329,9 +331,69 @@ fun PlaylistsScreen(
             }
         }
 
-        // Filter Chips Row
+        // Search Bar & Filter Chips Row
         item {
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                shape = RoundedCornerShape(percent = 50),
+                color = Color(0xFF16151A),
+                border = androidx.compose.foundation.BorderStroke(1.dp, GobeatsBorderSubtle),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+                    .height(44.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = GobeatsTextMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = playlistSearchQuery,
+                        onValueChange = { playlistSearchQuery = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = GobeatsTextPrimary,
+                            fontSize = 13.sp
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(GobeatsAmber),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { innerTextField ->
+                            if (playlistSearchQuery.isEmpty()) {
+                                Text(
+                                    text = "Filter playlists...",
+                                    fontSize = 13.sp,
+                                    color = GobeatsTextMuted
+                                )
+                            }
+                            innerTextField()
+                        }
+                    )
+                    if (playlistSearchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { playlistSearchQuery = "" },
+                            modifier = Modifier.size(20.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear",
+                                tint = GobeatsTextMuted,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -357,13 +419,19 @@ fun PlaylistsScreen(
             Spacer(modifier = Modifier.height(18.dp))
         }
 
-        // 3-Column Grid of Cards (filtered according to active filter)
+        // 3-Column Grid of Cards (filtered according to active filter and search query)
         item {
-            val displayedSpecs = when (filters[selectedFilterIndex]) {
+            val filteredByChip = when (filters[selectedFilterIndex]) {
                 "Yours" -> cardSpecs.filter { !it.isLikedSongs && !it.isImported }
                 "Smart" -> cardSpecs.filter { it.isLikedSongs }
                 "Imported" -> cardSpecs.filter { it.isImported }
                 else -> cardSpecs
+            }
+            val displayedSpecs = if (playlistSearchQuery.isBlank()) {
+                filteredByChip
+            } else {
+                val q = playlistSearchQuery.trim().lowercase()
+                filteredByChip.filter { it.title.lowercase().contains(q) }
             }
             if (displayedSpecs.isEmpty()) {
                 Surface(
@@ -608,6 +676,7 @@ fun PlaylistsScreen(
                                 val created = playlistRepository.createPlaylist(newPlaylistName.trim(), newPlaylistDesc.trim().ifEmpty { null })
                                 newPlaylistName = ""
                                 newPlaylistDesc = ""
+                                selectedFilterIndex = 0
                                 showCreateDialog = false
                                 loadPlaylists()
                                 onPlaylistClick(created)
@@ -634,11 +703,12 @@ fun PlaylistsScreen(
                 scope.launch {
                     val created = playlistRepository.createPlaylist(
                         name = name,
-                        description = "[Imported] ${matchedTracks.size} matched tracks"
+                        description = "[Imported] ${matchedTracks.size} tracks"
                     )
                     for (track in matchedTracks) {
-                        playlistRepository.addTrackToPlaylist(created.id, track.id)
+                        playlistRepository.addTrack(created.id, track)
                     }
+                    selectedFilterIndex = 0
                     loadPlaylists()
                     showImportSheet = false
                     onPlaylistClick(created)

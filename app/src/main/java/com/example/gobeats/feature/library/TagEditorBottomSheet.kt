@@ -1,8 +1,14 @@
 package com.example.gobeats.feature.library
 
+import android.app.Activity
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import com.example.gobeats.core.media.tag.ScopedStorageRouter
+import com.example.gobeats.core.media.tag.StorageWriteMechanism
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -118,6 +124,22 @@ fun TagEditorBottomSheet(
                     isArtworkRemoved = false
                 }
             }
+        }
+    }
+
+    var pendingPayload by remember { mutableStateOf<TagEditPayload?>(null) }
+
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            pendingPayload?.let { payload ->
+                onSave(payload)
+                pendingPayload = null
+            }
+        } else {
+            isSaving = false
+            pendingPayload = null
         }
     }
 
@@ -335,8 +357,36 @@ fun TagEditorBottomSheet(
                             genre = genreText.takeIf { it.isNotBlank() },
                             trackNumber = trackNumberText.toIntOrNull(),
                             artworkUri = finalArtworkUri,
-                            newArtworkBytes = selectedArtworkBytes
+                            newArtworkBytes = selectedArtworkBytes,
+                            removeArtwork = isArtworkRemoved
                         )
+
+                        // Check Scoped Storage write permission on Android 11+
+                        val filePath = when {
+                            track.fileUri.startsWith("file://") -> Uri.parse(track.fileUri).path
+                            track.fileUri.startsWith("/") -> track.fileUri
+                            else -> null
+                        }
+                        val isPublic = ScopedStorageRouter.isPublicStorage(context, filePath ?: track.fileUri)
+                        val mechanism = ScopedStorageRouter.resolveWriteMechanism(Build.VERSION.SDK_INT, isPublic)
+                        val canDirectWrite = filePath?.let { File(it) }?.let { it.exists() && it.canWrite() } ?: false
+
+                        if (mechanism == StorageWriteMechanism.MEDIA_STORE_CREATE_WRITE_REQUEST && !canDirectWrite) {
+                            val contentUri = when {
+                                track.fileUri.startsWith("content://") -> Uri.parse(track.fileUri)
+                                filePath != null -> ScopedStorageRouter.getContentUriForFilePath(context, filePath)
+                                else -> null
+                            }
+                            val intentSender = contentUri?.let { ScopedStorageRouter.requestWritePermissionIntentSender(context, it) }
+                            if (intentSender != null) {
+                                pendingPayload = payload
+                                writePermissionLauncher.launch(
+                                    IntentSenderRequest.Builder(intentSender).build()
+                                )
+                                return@GobeatsPrimaryButton
+                            }
+                        }
+
                         onSave(payload)
                     }
                 )
