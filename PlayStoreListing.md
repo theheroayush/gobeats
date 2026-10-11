@@ -136,6 +136,13 @@ When filling out the **Data Safety Questionnaire** in Google Play Console, answe
 - **App Category:** Music & Audio / Media Player
 - **Tags:** Music Player, Offline Audio, Video Player, Equalizer, Subtitles
 
+### D. Photo and Video Permissions (`READ_MEDIA_VIDEO`) Declaration
+- **Core Functionality Category:** Media Player / Video Player (Audio & Video Playback)
+- **Why Android Photo Picker is Insufficient:** The system Photo Picker is strictly designed for one-time or infrequent user-initiated selections. It cannot support an offline media player that requires persistent background library indexing, continuous folder monitoring, automated playlist queue management, embedded chapter/opening detection, or metadata caching.
+- **Console Declaration Text (Copy-Paste):**
+  > *"gobeats is an offline media player application designed for local audio and video playback. The READ_MEDIA_VIDEO permission is strictly required for the app's core functionality and continuous operation: (1) Core Video Playback & Management: Discovers, indexes, and organizes the user's offline video files into smart playlists, folders, and library categories. Decodes local video files via AndroidX Media3/ExoPlayer with gesture controls, picture-in-picture, and screen-off background audio playback. (2) Advanced Features: Analyzes embedded chapter markers for offline skip-intro detection, applies Dialogue Boost, and generates timed dual subtitles via on-device speech recognition. (3) Why Photo Picker is Insufficient: The system Android Photo Picker only facilitates one-time manual file selection. It cannot provide persistent library indexing, automatic background discovery of newly added video files, continuous playlist queuing, or metadata caching. All video processing is performed 100% on-device with zero cloud uploads or telemetry."*
+
+
 ---
 
 ## 7. Commercial Terms & Developer Monetization Autonomy
