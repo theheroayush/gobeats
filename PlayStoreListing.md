@@ -13,71 +13,63 @@
 
 ---
 
-## 2. Full Store Description (Google Play Formatted)
+## 2. Full Store Description (Google Play Formatted — 3,407 / 4,000 Chars)
 
-**gobeats** is a precision-engineered, audiophile-grade offline music and video player designed for true sound lovers. Built with zero cloud dependence, gobeats leverages the raw processing power of your Android device to deliver bit-perfect playback, dynamic real-time artwork visuals, intelligent offline playlists, hardware-aware audio profiles, and millisecond-accurate synchronized lyrics.
+gobeats is a precision-engineered, audiophile-grade offline music and video player built for true sound lovers. Engineered with zero cloud dependence, gobeats leverages the on-device processing power of your phone to deliver bit-perfect playback, dynamic real-time artwork visuals, intelligent offline playlists, hardware-aware audio profiles, and millisecond-accurate synchronized lyrics.
 
-No ads. Zero behavioral tracking. 100% offline-first. Just pure media, the way artists and filmmakers intended. All features currently unlocked for community release.
+Zero ads. Zero behavioral tracking. 100% offline-first. Just pure media, the way artists and filmmakers intended.
 
----
+━━━━━━━━━━━━━━━━━━━━━━━━
+🌟 KEY FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 🌟 KEY FEATURES (v3.2)
+🎙️ OFFLINE AI SUBTITLES & DUAL SUBTITLE STACKING
+• On-Device Speech Recognition: Generate subtitles directly on your phone with zero internet connection.
+• Indian Regional Focus: Offline recognition for Hindi, Tamil, Telugu, Marathi, Bengali, and English.
+• Dual Subtitle Stacking: Display primary dialogue (bold amber) and secondary translated subtitles (crisp cyan) simultaneously on video playback.
+• Zero App Bloat: Uses native Android on-device speech packs with one-tap shortcuts.
 
-#### 🎙️ Offline AI Generated Subtitles & Dual Subtitles
-Generate speech-to-text subtitles directly on your phone with zero internet connection:
-• **Indian Regional Focus**: Native offline recognition for Hindi, Tamil, Telugu, Marathi, Bengali, and English.
-• **Dual Subtitle Stacking**: Display primary dialogue (bold amber) and secondary translated subtitles (crisp cyan) simultaneously on video playback.
-• **Zero App Bloat**: Leverages Android’s on-device speech language models with direct one-tap download shortcuts.
+🎧 HARDWARE AUTO DEVICE PROFILES & AV LIP-SYNC DELAY
+• Auto Peripheral Detection: Automatically detects connected TWS Earbuds, Over-ear Headphones, Car Audio, or Phone Speakers.
+• Dynamic EQ Switching: Instantly activates tuned acoustic curves for each device profile.
+• Persistent Bluetooth Lip-Sync Delay: Remembers custom audio delay offsets (±500 ms) per device so video dialogue stays permanently in sync.
 
-#### 🎧 Hardware Auto Device Profile & Persistent AV Delay
-Never re-adjust your equalizer or lip-sync timing again:
-• **Auto Hardware Detection**: Detects whether you are connected to TWS Earbuds, Over-ear Headphones, Car Audio, or Phone Speakers.
-• **Auto EQ Switching**: Instantly applies tuned acoustic curves for each device profile.
-• **Persistent Bluetooth Lip-Sync Delay**: Remembers custom audio delay offsets (±500 ms) per Bluetooth device MAC/name so audio and video dialogue stay perfectly in sync every time you reconnect.
+🗣️ DIALOGUE BOOST (ACOUSTIC FORMANT FILTER)
+• Never struggle to hear movie dialogue over loud sound effects again.
+• Isolates spoken speech frequencies (300 Hz – 3.4 kHz) while reducing low-end rumble (at 60 Hz) for crystal-clear voices.
 
-#### 🗣️ Dialogue Boost (Formant Speech Clarity Filter)
-Stop struggling to hear movie dialogue over explosive sound effects. Our acoustic formant filter isolates spoken speech frequencies (300 Hz – 3.4 kHz) and attenuates low-end rumble (at 60 Hz), providing crystal-clear actor voices in noisy environments.
+⏩ 100% OFFLINE VIDEO SKIP INTRO
+• Smart Chapter & Opening Detection: Detects opening themes and chapter markers completely offline.
+• Responsive Skip Button: Fluid floating action pill to jump straight into the episode.
 
-#### ⏩ 100% Offline Video Skip Intro
-Enjoy binge-watching without manual scrubbing. gobeats detects embedded chapter markers and opening sequence energy patterns completely offline, showing a floating, responsive `[ ⏩ Skip Intro ]` action button.
+📴 SCREEN-OFF VIDEO AUDIO CONTINUITY
+• Background Playback: Keep listening to video concerts, lectures, and podcasts with your screen locked or turned off.
+• Full system media notification controls.
 
-#### 📴 Screen-Off Video Audio Playback
-Keep listening to video concerts, podcasts, and lectures even when your screen is locked or turned off. Background playback continues uninterrupted without audio stutter or app crashes.
+🎨 DYNAMIC MESH GRADIENTS & 60 FPS VISUALIZER
+• Living Album Art: Extracts dominant and vibrant tonal palettes from album covers to render fluid mesh gradients.
+• Hardware-Accelerated Visualizer: Real-time 60 FPS visualizer reacting dynamically to bass drops and transients.
 
-#### 🎨 Dynamic Artwork Mesh Gradients & 60 FPS Visualizer
-Experience a living Now Playing interface. gobeats extracts dominant, vibrant, and deep tonal palettes directly from your album covers, transforming the background into an animated, fluid mesh gradient. Watch your music come alive with a hardware-accelerated 60 FPS audio visualizer reacting in real time to bass drops and transients.
+📜 AUTOMATIC SYNCED LYRICS (LRCLIB + OFFLINE CACHE)
+• Word-by-word synchronized lyrics fetched in the background and cached locally for permanent offline access.
+• Also supports companion .lrc files and embedded ID3/USLT tags.
 
-#### 📜 Automatic Synced Lyrics (LRCLIB + Offline Cache)
-Sing along with word-for-word, time-synced lyrics. gobeats automatically fetches synced `.lrc` lyrics in the background without interrupting your playback, indexing them directly to your device storage. Once cached, lyrics are permanently accessible completely offline. Also supports companion `.lrc` files and embedded ID3/USLT/SYLT tags.
+🧠 ON-DEVICE SMART PLAYLISTS
+• Most Played, Heavy Rotation (last 14 days), Recently Played, and Forgotten Favorites curated entirely on your device.
 
-#### 🧠 On-Device Smart Playlists & Telemetry
-Let your device curate your soundtrack without sending a single byte to the cloud. gobeats tracks your listening habits locally to dynamically generate:
-• **Most Played**: Your all-time high-rotation anthems.
-• **Heavy Rotation**: What you can’t stop playing over the past 14 days.
-• **Recently Played**: Instant access to your recent playback history.
-• **Forgotten Favorites**: Rediscover buried gems you used to love.
-• **Liked Songs**: Instant one-tap bookmarking.
-
-#### 🎛️ Studio-Grade 5-Band Equalizer & ReplayGain
-Fine-tune every frequency with our low-latency DSP equalizer. 
+🎛️ STUDIO 5-BAND EQUALIZER & REPLAYGAIN
 • Custom presets: Studio Reference, Deep Bass Punch, Vocal Clarity, Warm Analog, Electronic/EDM, and Acoustic.
-• Independent Bass Boost & Surround Sound Virtualizer.
-• ITU-R BS.1770-4 ReplayGain with peak-clipping prevention for uniform, distortion-free loudness across all albums.
+• ITU-R BS.1770-4 ReplayGain with peak-clipping prevention.
 
-#### ⚡ Instant Background Media Scanner
-Never wait for your library to load. gobeats uses non-blocking asynchronous scanning with windowed SQLite transactions. Start browsing, searching, and listening immediately while your entire music and video archive indexes smoothly in the background.
+💻 PIN-BASED LOCAL WI-FI PC SYNC
+• Transfer songs, albums, and playlists directly from your desktop browser to your phone over your local network using a secure 6-digit PIN.
 
-#### 💻 Seamless PC Sync (Pin-Based Local Transfer)
-Connect your phone and PC over local Wi-Fi with a clean, instant 6-digit PIN. Transfer songs, albums, and playlists directly from your desktop browser to your phone at full gigabit network speeds.
-
----
-
-### 🎧 TECHNICAL SPECIFICATIONS & SUPPORTED FORMATS
-• **Audio Engine**: AndroidX Media3 / ExoPlayer with 32-bit Float bit-perfect decoding
-• **Audio Formats**: FLAC, ALAC, WAV, AIFF, DSD, APE, MP3, AAC, OGG Vorbis, Opus, M4A
-• **Video Formats**: MP4, MKV, WebM, 3GP, AVI
-• **Tag & Subtitle Support**: ID3v1, ID3v2.3, ID3v2.4, Vorbis Comments, MP4 Atoms, SRT, VTT, LRC
-• **Permissions**: Zero invasive permissions. Audio and media storage only.
+━━━━━━━━━━━━━━━━━━━━━━━━
+🎧 SUPPORTED FORMATS
+━━━━━━━━━━━━━━━━━━━━━━━━
+• Audio: FLAC, ALAC, WAV, AIFF, DSD, APE, MP3, AAC, OGG Vorbis, Opus, M4A
+• Video: MP4, MKV, WebM, 3GP, AVI
+• Subtitles: SRT, VTT, Embedded MKV/MP4 tracks, LRC
 
 ---
 
