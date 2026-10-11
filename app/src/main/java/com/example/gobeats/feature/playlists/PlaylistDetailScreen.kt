@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import com.example.gobeats.core.ui.debouncedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -391,13 +392,13 @@ fun PlaylistDetailScreen(
                 }
             }
         } else {
-            itemsIndexed(tracks) { index, track ->
+            itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                 var trackMenuOpen by remember { mutableStateOf(false) }
 
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onTrackClick(track, tracks) }
+                        .debouncedClickable { onTrackClick(track, tracks) }
                         .padding(horizontal = 20.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {

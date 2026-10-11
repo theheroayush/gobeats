@@ -59,8 +59,11 @@ import com.example.gobeats.core.designsystem.components.MiniPlayerBar
 import com.example.gobeats.core.media.MetadataExtractor
 import com.example.gobeats.core.model.Album
 import com.example.gobeats.core.model.Artist
+import com.example.gobeats.core.model.LibraryDataState
 import com.example.gobeats.core.model.Playlist
 import com.example.gobeats.core.model.Track
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.debounce
 import com.example.gobeats.feature.devices.DevicesScreen
 import com.example.gobeats.feature.home.HomeScreen
 import com.example.gobeats.feature.library.AlbumDetailScreen
@@ -314,25 +317,39 @@ fun GobeatsApp(
         !isCinemaActive &&
         !isFloatingMiniplayerDismissed
 
-    var allTracks by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var allVideos by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var allAlbums by remember { mutableStateOf<List<Album>>(emptyList()) }
-    var allArtists by remember { mutableStateOf<List<Artist>>(emptyList()) }
-    var allPlaylists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
-    var recentlyPlayed by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var recentlyAdded by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var libraryData by remember { mutableStateOf(LibraryDataState()) }
+    val allTracks = libraryData.tracks
+    val allVideos = libraryData.videos
+    val allAlbums = libraryData.albums
+    val allArtists = libraryData.artists
+    val allPlaylists = libraryData.playlists
+    val recentlyPlayed = libraryData.recentlyPlayed
+    val recentlyAdded = libraryData.recentlyAdded
 
     val scope = rememberCoroutineScope()
 
     fun refreshLibrary() {
-        scope.launch {
-            allTracks = app.libraryRepository.getAllTracks()
-            allVideos = app.libraryRepository.getVideoTracks()
-            allAlbums = app.libraryRepository.getAllAlbums()
-            allArtists = app.libraryRepository.getAllArtists()
-            allPlaylists = app.playlistRepository.getAllPlaylists()
-            recentlyPlayed = app.libraryRepository.getRecentlyPlayedTracks()
-            recentlyAdded = app.libraryRepository.getRecentlyAddedTracks()
+        scope.launch(Dispatchers.IO) {
+            val tracksDef = async { app.libraryRepository.getAllTracks() }
+            val videosDef = async { app.libraryRepository.getVideoTracks() }
+            val albumsDef = async { app.libraryRepository.getAllAlbums() }
+            val artistsDef = async { app.libraryRepository.getAllArtists() }
+            val playlistsDef = async { app.playlistRepository.getAllPlaylists() }
+            val recPlayedDef = async { app.libraryRepository.getRecentlyPlayedTracks() }
+            val recAddedDef = async { app.libraryRepository.getRecentlyAddedTracks() }
+
+            val newState = LibraryDataState(
+                tracks = tracksDef.await(),
+                videos = videosDef.await(),
+                albums = albumsDef.await(),
+                artists = artistsDef.await(),
+                playlists = playlistsDef.await(),
+                recentlyPlayed = recPlayedDef.await(),
+                recentlyAdded = recAddedDef.await()
+            )
+            withContext(Dispatchers.Main) {
+                libraryData = newState
+            }
         }
     }
 
@@ -388,9 +405,12 @@ fun GobeatsApp(
                 }
             }
         }
-        app.libraryRepository.dbChangeTrigger.collectLatest {
-            refreshLibrary()
-        }
+        @OptIn(kotlinx.coroutines.FlowPreview::class)
+        app.libraryRepository.dbChangeTrigger
+            .debounce(300L)
+            .collectLatest {
+                refreshLibrary()
+            }
     }
 
     val isScanning by app.libraryRepository.isScanning.collectAsState()
@@ -493,7 +513,6 @@ fun GobeatsApp(
             is Destination.Search -> {
                 SearchScreen(
                     libraryRepository = app.libraryRepository,
-                    playbackState = playbackState,
                     onTrackClick = { track, queue ->
                         app.playbackRepository.playTrack(track, queue)
                         if (track.isVideo) showNowPlayingSheet = true
@@ -568,7 +587,7 @@ fun GobeatsApp(
                 AlbumDetailScreen(
                     album = dest.album,
                     libraryRepository = app.libraryRepository,
-                    playbackState = playbackState,
+                    currentTrackId = playbackState.currentTrack?.id,
                     onTrackClick = { track, queue ->
                         app.playbackRepository.playTrack(track, queue)
                         if (track.isVideo) showNowPlayingSheet = true
@@ -595,7 +614,7 @@ fun GobeatsApp(
                 ArtistDetailScreen(
                     artist = dest.artist,
                     libraryRepository = app.libraryRepository,
-                    playbackState = playbackState,
+                    currentTrackId = playbackState.currentTrack?.id,
                     onTrackClick = { track, queue ->
                         app.playbackRepository.playTrack(track, queue)
                         if (track.isVideo) showNowPlayingSheet = true
@@ -746,12 +765,13 @@ fun GobeatsApp(
                         ) { tab ->
                             when (tab) {
                                 0 -> HomeScreen(
-                                    playbackState = playbackState,
                                     recentlyPlayed = recentlyPlayed,
                                     recentlyAdded = recentlyAdded,
                                     albums = allAlbums,
                                     artists = allArtists,
                                     playlists = allPlaylists,
+                                    currentTrackId = playbackState.currentTrack?.id,
+                                    isPlaying = playbackState.isPlaying,
                                     userName = userProfile.name,
                                     isScanning = isScanning,
                                     scannedCount = scanProgress.scannedCount,

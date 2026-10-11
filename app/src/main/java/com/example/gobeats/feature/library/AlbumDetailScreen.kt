@@ -55,7 +55,8 @@ import com.example.gobeats.theme.GobeatsTextSecondary
 fun AlbumDetailScreen(
     album: Album,
     libraryRepository: LibraryRepository,
-    playbackState: PlaybackUiState,
+    currentTrackId: String? = null,
+    playbackState: PlaybackUiState? = null,
     onTrackClick: (Track, List<Track>) -> Unit,
     onToggleFavorite: (Track) -> Unit,
     onBack: () -> Unit,
@@ -181,11 +182,12 @@ fun AlbumDetailScreen(
                 }
             }
 
+            val activeTrackId = currentTrackId ?: playbackState?.currentTrack?.id
             // Track list
-            items(albumTracks) { track ->
+            items(albumTracks, key = { it.id }) { track ->
                 TrackItemRow(
                     track = track,
-                    isPlaying = playbackState.currentTrack?.id == track.id,
+                    isPlaying = activeTrackId == track.id,
                     onClick = { onTrackClick(track, albumTracks) },
                     onToggleFavorite = { onToggleFavorite(track) },
                     onPlayNext = { onPlayNext(track) },

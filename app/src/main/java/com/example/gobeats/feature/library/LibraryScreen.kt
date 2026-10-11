@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.gobeats.core.designsystem.components.LibraryCategoryTile
 import com.example.gobeats.core.designsystem.components.TrackItemRow
+import com.example.gobeats.core.ui.debouncedClickable
 import com.example.gobeats.core.model.Album
 import com.example.gobeats.core.model.Artist
 import com.example.gobeats.core.model.Playlist
@@ -599,7 +600,7 @@ fun LibraryScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(albums) { album ->
+                    items(albums, key = { it.id }) { album ->
                         LibraryAlbumCard(album = album, onClick = { onAlbumClick(album) })
                     }
                 }
@@ -620,7 +621,7 @@ fun LibraryScreen(
             }
 
             val albumRows = albums.chunked(2)
-            items(albumRows) { rowAlbums ->
+            items(albumRows, key = { it.firstOrNull()?.id ?: it.hashCode().toString() }) { rowAlbums ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -662,11 +663,11 @@ fun LibraryScreen(
                     )
                 }
             } else {
-                items(artists) { artist ->
+                items(artists, key = { it.id }) { artist ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onArtistClick(artist) }
+                            .debouncedClickable { onArtistClick(artist) }
                             .padding(horizontal = 20.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -723,7 +724,7 @@ fun LibraryScreen(
                 )
             }
 
-            items(genreGroups.keys.toList()) { genreName ->
+            items(genreGroups.keys.toList(), key = { it }) { genreName ->
                 val gTracks = genreGroups[genreName] ?: emptyList()
                 Surface(
                     modifier = Modifier
@@ -894,7 +895,7 @@ fun LibraryScreen(
                     }
                 }
             } else {
-                items(videos) { videoTrack ->
+                items(videos, key = { it.id }) { videoTrack ->
                     TrackItemRow(
                         track = videoTrack,
                         isPlaying = (videoTrack.id == currentTrackId && isPlaying),
@@ -941,7 +942,7 @@ fun LibraryScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(playlists) { playlist ->
+                    items(playlists, key = { it.id }) { playlist ->
                         LibraryPlaylistCard(playlist = playlist, onClick = { onPlaylistClick(playlist) })
                     }
                 }
@@ -979,7 +980,7 @@ fun LibraryScreen(
             }
 
             val displayList = if (selectedCategory == "Songs") sortedTracks else sortedTracks.take(15)
-            items(displayList) { track ->
+            items(displayList, key = { it.id }) { track ->
                 TrackItemRow(
                     track = track,
                     isPlaying = (track.id == currentTrackId && isPlaying),

@@ -416,7 +416,7 @@ fun PlaylistsScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filters.indices.toList()) { index ->
+                items(filters.indices.toList(), key = { filters[it] }) { index ->
                     val isSelected = selectedFilterIndex == index
                     Surface(
                         modifier = Modifier.clickable { selectedFilterIndex = index },

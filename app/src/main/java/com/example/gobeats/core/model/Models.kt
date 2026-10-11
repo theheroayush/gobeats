@@ -58,6 +58,17 @@ data class Playlist(
     val updatedAt: Long = System.currentTimeMillis()
 ) : Serializable
 
+@androidx.compose.runtime.Immutable
+data class LibraryDataState(
+    val tracks: List<Track> = emptyList(),
+    val videos: List<Track> = emptyList(),
+    val albums: List<Album> = emptyList(),
+    val artists: List<Artist> = emptyList(),
+    val playlists: List<Playlist> = emptyList(),
+    val recentlyPlayed: List<Track> = emptyList(),
+    val recentlyAdded: List<Track> = emptyList()
+) : Serializable
+
 enum class SourceType {
     LOCAL_STORAGE,
     DESKTOP_CONNECT,

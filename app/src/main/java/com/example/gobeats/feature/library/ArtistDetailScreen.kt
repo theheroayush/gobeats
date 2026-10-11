@@ -57,7 +57,8 @@ import com.example.gobeats.theme.GobeatsTextPrimary
 fun ArtistDetailScreen(
     artist: Artist,
     libraryRepository: LibraryRepository,
-    playbackState: PlaybackUiState,
+    currentTrackId: String? = null,
+    playbackState: PlaybackUiState? = null,
     onTrackClick: (Track, List<Track>) -> Unit,
     onToggleFavorite: (Track) -> Unit,
     onPlayNext: (Track) -> Unit,
@@ -208,10 +209,11 @@ fun ArtistDetailScreen(
                     }
                 }
             } else {
-                items(artistTracks) { track ->
+                val activeTrackId = currentTrackId ?: playbackState?.currentTrack?.id
+                items(artistTracks, key = { it.id }) { track ->
                     TrackItemRow(
                         track = track,
-                        isPlaying = playbackState.currentTrack?.id == track.id,
+                        isPlaying = activeTrackId == track.id,
                         onClick = { onTrackClick(track, artistTracks) },
                         onToggleFavorite = { onToggleFavorite(track) },
                         onPlayNext = { onPlayNext(track) },

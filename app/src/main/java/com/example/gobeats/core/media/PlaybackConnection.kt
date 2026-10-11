@@ -47,6 +47,7 @@ class PlaybackConnection(
 
     private var currentQueue: List<Track> = emptyList()
     private var positionJob: Job? = null
+    private var playJob: Job? = null
     private var pendingPlay: Pair<Track, List<Track>>? = null
     private var baseTrackVolume: Float = 1.0f
     private var fadeInJob: Job? = null
@@ -506,7 +507,7 @@ class PlaybackConnection(
                     }
 
                     var liveStats: com.example.gobeats.core.model.VideoPlaybackStats? = null
-                    if (_playbackState.value.isVideoMode) {
+                    if (_playbackState.value.isVideoMode && tick % 4 == 0) {
                         var vFormat: androidx.media3.common.Format? = null
                         var aFormat: androidx.media3.common.Format? = null
 
@@ -723,42 +724,8 @@ class PlaybackConnection(
         val player = controller
         val trackIndex = queue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
 
-        if (player == null) {
-            pendingPlay = track to queue
-            currentQueue = queue
-            _playbackState.update {
-                it.copy(
-                    currentTrack = track,
-                    queue = queue,
-                    queueIndex = trackIndex,
-                    isPlaying = true,
-                    isVideoMode = track.isVideo,
-                    videoWidth = track.videoWidth,
-                    videoHeight = track.videoHeight
-                )
-            }
-            if (track.isVideo) {
-                checkAndShowVideoResumePrompt(track.id)
-            } else {
-                _playbackState.update { it.copy(resumePrompt = null) }
-            }
-            return
-        }
-
+        // Optimistically update UI immediately for instant tactile response
         currentQueue = queue
-
-        // Windowed queue across IPC to prevent TransactionTooLargeException (1MB Android Binder limit)
-        val maxWindowRadius = 25
-        val windowStart = kotlin.math.max(0, trackIndex - maxWindowRadius)
-        val windowEnd = kotlin.math.min(queue.size, trackIndex + maxWindowRadius + 1)
-        val windowedTracks = queue.subList(windowStart, windowEnd)
-        val windowedMediaItems = windowedTracks.map { qTrack -> buildMediaItem(qTrack) }
-        val windowIndex = trackIndex - windowStart
-
-        player.setMediaItems(windowedMediaItems, windowIndex, 0L)
-        player.prepare()
-        player.play()
-
         _playbackState.update {
             it.copy(
                 currentTrack = track,
@@ -771,27 +738,61 @@ class PlaybackConnection(
             )
         }
 
-        if (track.isVideo) {
-            checkAndShowVideoResumePrompt(track.id)
-            val introSeg = OfflineSkipIntroDetector.detectIntroSegment(track)
-            _playbackState.update {
-                it.copy(
-                    activeSkipIntroSegment = introSeg,
-                    isSkipIntroVisible = OfflineSkipIntroDetector.isSkipIntroActive(0L, introSeg)
-                )
+        if (player == null) {
+            pendingPlay = track to queue
+            if (track.isVideo) {
+                checkAndShowVideoResumePrompt(track.id)
+            } else {
+                _playbackState.update { it.copy(resumePrompt = null) }
             }
-        } else {
-            _playbackState.update {
-                it.copy(
-                    resumePrompt = null,
-                    activeSkipIntroSegment = null,
-                    isSkipIntroVisible = false,
-                    activePrimarySubtitleText = null,
-                    activeSecondarySubtitleText = null
-                )
-            }
+            return
         }
-        persistCurrentPlaybackState()
+
+        // Cancel previous pending playback job if user clicked another track rapidly
+        playJob?.cancel()
+        playJob = scope.launch {
+            // Windowed queue across IPC to prevent TransactionTooLargeException (1MB Android Binder limit)
+            val maxWindowRadius = 25
+            val windowStart = kotlin.math.max(0, trackIndex - maxWindowRadius)
+            val windowEnd = kotlin.math.min(queue.size, trackIndex + maxWindowRadius + 1)
+            val windowedTracks = queue.subList(windowStart, windowEnd)
+
+            // Heavy MediaItem building (including subtitle filesystem queries) offloaded to IO
+            val windowedMediaItems = withContext(Dispatchers.IO) {
+                windowedTracks.map { qTrack -> buildMediaItem(qTrack) }
+            }
+
+            if (!isActive) return@launch
+
+            val windowIndex = trackIndex - windowStart
+            player.setMediaItems(windowedMediaItems, windowIndex, 0L)
+            player.prepare()
+            player.play()
+
+            if (track.isVideo) {
+                checkAndShowVideoResumePrompt(track.id)
+                val introSeg = withContext(Dispatchers.Default) {
+                    OfflineSkipIntroDetector.detectIntroSegment(track)
+                }
+                _playbackState.update {
+                    it.copy(
+                        activeSkipIntroSegment = introSeg,
+                        isSkipIntroVisible = OfflineSkipIntroDetector.isSkipIntroActive(0L, introSeg)
+                    )
+                }
+            } else {
+                _playbackState.update {
+                    it.copy(
+                        resumePrompt = null,
+                        activeSkipIntroSegment = null,
+                        isSkipIntroVisible = false,
+                        activePrimarySubtitleText = null,
+                        activeSecondarySubtitleText = null
+                    )
+                }
+            }
+            persistCurrentPlaybackState()
+        }
     }
 
     fun togglePlayPause() {

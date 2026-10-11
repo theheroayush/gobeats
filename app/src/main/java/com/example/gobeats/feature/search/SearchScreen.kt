@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import com.example.gobeats.core.ui.debouncedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -81,7 +82,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun SearchScreen(
     libraryRepository: LibraryRepository,
-    playbackState: PlaybackUiState,
+    playbackState: PlaybackUiState = PlaybackUiState(),
     onTrackClick: (Track, List<Track>) -> Unit,
     onAlbumClick: (Album) -> Unit,
     onArtistClick: (Artist) -> Unit,
@@ -441,7 +442,7 @@ fun SearchScreen(
                     }
                 } else {
                     // Display Artists
-                    items(artistResults) { artist ->
+                    items(artistResults, key = { it.id }) { artist ->
                         SearchResultRow(
                             title = artist.name,
                             subtitle = "Artist • ${artist.trackCount} songs",
@@ -455,7 +456,7 @@ fun SearchScreen(
                     }
 
                     // Display Albums
-                    items(albumResults) { album ->
+                    items(albumResults, key = { it.id }) { album ->
                         SearchResultRow(
                             title = album.title,
                             subtitle = "${album.artistName} • ${album.trackCount} songs",
@@ -469,7 +470,7 @@ fun SearchScreen(
                     }
 
                     // Display Playlists
-                    items(playlistResults) { playlist ->
+                    items(playlistResults, key = { it.id }) { playlist ->
                         SearchResultRow(
                             title = playlist.name,
                             subtitle = "Playlist • ${playlist.trackCount} tracks",
@@ -483,7 +484,7 @@ fun SearchScreen(
                     }
 
                     // Display Genres
-                    items(genreResults) { genre ->
+                    items(genreResults, key = { it }) { genre ->
                         val count = allTracks.count { it.genre.equals(genre, true) }
                         SearchResultRow(
                             title = genre,
@@ -498,7 +499,7 @@ fun SearchScreen(
                     }
 
                     // Display Videos
-                    items(videoResults) { video ->
+                    items(videoResults, key = { it.id }) { video ->
                         SearchResultRow(
                             title = video.title,
                             subtitle = "${video.artistName} • ${formatDuration(video.durationMs)}",
@@ -515,7 +516,7 @@ fun SearchScreen(
                     }
 
                     // Display Songs
-                    items(songResults) { track ->
+                    items(songResults, key = { it.id }) { track ->
                         SearchResultRow(
                             title = track.title,
                             subtitle = "${track.artistName} • ${formatDuration(track.durationMs)}",
@@ -572,7 +573,7 @@ fun SearchScreen(
                 }
 
                 // Render artists
-                items(displayArtists) { artist ->
+                items(displayArtists, key = { it.id }) { artist ->
                     SearchResultRow(
                         title = artist.name,
                         subtitle = "Artist • ${artist.trackCount} songs",
@@ -583,7 +584,7 @@ fun SearchScreen(
                 }
 
                 // Render albums
-                items(displayAlbums) { album ->
+                items(displayAlbums, key = { it.id }) { album ->
                     SearchResultRow(
                         title = album.title,
                         subtitle = "${album.artistName} • ${album.trackCount} songs",
@@ -594,7 +595,7 @@ fun SearchScreen(
                 }
 
                 // Render Playlists
-                items(displayPlaylists) { pl ->
+                items(displayPlaylists, key = { it.id }) { pl ->
                     SearchResultRow(
                         title = pl.name,
                         subtitle = "Playlist • ${pl.trackCount} tracks",
@@ -605,7 +606,7 @@ fun SearchScreen(
                 }
 
                 // Render Genres
-                items(displayGenres) { genre ->
+                items(displayGenres, key = { it }) { genre ->
                     val count = allTracks.count { it.genre.equals(genre, true) }
                     SearchResultRow(
                         title = genre,
@@ -617,7 +618,7 @@ fun SearchScreen(
                 }
 
                 // Render Videos
-                items(displayVideos) { video ->
+                items(displayVideos, key = { it.id }) { video ->
                     SearchResultRow(
                         title = video.title,
                         subtitle = "${video.artistName} • ${formatDuration(video.durationMs)}",
@@ -631,7 +632,7 @@ fun SearchScreen(
                 }
 
                 // Render songs
-                items(displayTracks) { track ->
+                items(displayTracks, key = { it.id }) { track ->
                     SearchResultRow(
                         title = track.title,
                         subtitle = "${track.artistName} • ${formatDuration(track.durationMs)}",
@@ -681,7 +682,7 @@ private fun SearchResultRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .debouncedClickable { onClick() }
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

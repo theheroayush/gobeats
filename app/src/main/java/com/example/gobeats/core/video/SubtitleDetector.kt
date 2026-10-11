@@ -31,7 +31,16 @@ data class DetectedSubtitle(
 
 object SubtitleDetector {
 
+    private val subtitleCache = android.util.LruCache<String, List<DetectedSubtitle>>(200)
+
+    fun clearCache() {
+        subtitleCache.evictAll()
+    }
+
     fun detectSubtitles(context: Context, track: Track): List<DetectedSubtitle> {
+        val cached = subtitleCache.get(track.fileUri)
+        if (cached != null) return cached
+
         val detected = mutableListOf<DetectedSubtitle>()
         val parsedUri = Uri.parse(track.fileUri)
 
@@ -67,6 +76,7 @@ object SubtitleDetector {
             }
         }
 
+        subtitleCache.put(track.fileUri, detected)
         return detected
     }
 

@@ -62,6 +62,7 @@ import com.example.gobeats.core.model.Artist
 import com.example.gobeats.core.model.PlaybackUiState
 import com.example.gobeats.core.model.Playlist
 import com.example.gobeats.core.model.Track
+import com.example.gobeats.core.ui.debouncedClickable
 import com.example.gobeats.theme.GobeatsAmber
 import com.example.gobeats.theme.GobeatsBorderSubtle
 import com.example.gobeats.theme.GobeatsObsidian
@@ -73,12 +74,14 @@ import com.example.gobeats.theme.GobeatsTextSecondary
 
 @Composable
 fun HomeScreen(
-    playbackState: PlaybackUiState,
     recentlyPlayed: List<Track>,
     recentlyAdded: List<Track>,
     albums: List<Album>,
     artists: List<Artist>,
     playlists: List<Playlist> = emptyList(),
+    currentTrackId: String? = null,
+    isPlaying: Boolean = false,
+    playbackState: PlaybackUiState? = null,
     userName: String = "",
     isScanning: Boolean = false,
     scannedCount: Int = 0,
@@ -199,20 +202,20 @@ fun HomeScreen(
 
             val continueTracks = (recentlyPlayed.ifEmpty { recentlyAdded }).take(6)
             if (continueTracks.isNotEmpty()) {
+                val activeTrackId = currentTrackId ?: playbackState?.currentTrack?.id
+                val activeIsPlaying = if (currentTrackId != null) isPlaying else (playbackState?.isPlaying ?: false)
+
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(continueTracks) { track ->
-                        val isCurrent = playbackState.currentTrack?.id == track.id
-                        val currentProgress = if (isCurrent && track.durationMs > 0) {
-                            (playbackState.currentPositionMs.toFloat() / track.durationMs).coerceIn(0f, 1f)
-                        } else 0f
+                    items(continueTracks, key = { it.id }) { track ->
+                        val isCurrent = activeTrackId == track.id
 
                         ContinueListeningCard(
                             track = track,
-                            isPlaying = isCurrent && playbackState.isPlaying,
-                            progress = currentProgress,
+                            isPlaying = isCurrent && activeIsPlaying,
+                            progress = 0f,
                             onClick = { onTrackClick(track, continueTracks) },
                             onPlayNext = { onPlayNext(track) },
                             onAddToQueue = { onAddToQueue(track) },
@@ -300,7 +303,7 @@ fun HomeScreen(
                     }
                 }
 
-                items(playlists) { pl ->
+                items(playlists, key = { it.id }) { pl ->
                     HomePlaylistCard(
                         playlist = pl,
                         onClick = { onPlaylistClick(pl) }
@@ -323,7 +326,7 @@ fun HomeScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
-                    items(artists.take(8)) { artist ->
+                    items(artists.take(8), key = { it.id }) { artist ->
                         ArtistAvatarItem(
                             artist = artist,
                             onClick = { onArtistClick(artist) }
@@ -347,7 +350,7 @@ fun HomeScreen(
                     contentPadding = PaddingValues(horizontal = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(albums.take(8)) { album ->
+                    items(albums.take(8), key = { it.id }) { album ->
                         RecentlyAddedAlbumCard(
                             album = album,
                             onClick = { onAlbumClick(album) }
@@ -412,7 +415,7 @@ private fun ContinueListeningCard(
     Column(
         modifier = Modifier
             .width(140.dp)
-            .clickable { onClick() }
+            .debouncedClickable { onClick() }
     ) {
         Box(
             modifier = Modifier
